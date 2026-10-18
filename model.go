@@ -167,16 +167,23 @@ func failedStep(j ghJob) string {
 	return ""
 }
 
-// pickRun chooses the run the surface shows first: one in progress, else one that
-// failed, else the newest.
+// sortRuns orders runs newest first: by creation time, then by id, so runs GitHub
+// created in the same second (a push and its pull_request event, a run cancelled by
+// the next one's concurrency group) put the later one first.
+func sortRuns(runs []ghRun) {
+	sort.SliceStable(runs, func(i, j int) bool {
+		if !runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].CreatedAt.After(runs[j].CreatedAt)
+		}
+		return runs[i].ID > runs[j].ID
+	})
+}
+
+// pickRun chooses the run the surface shows first from runs sorted newest first
+// (sortRuns): the newest one that failed or has not finished, else the newest.
 func pickRun(runs []ghRun) int64 {
 	for _, r := range runs {
-		if !completed(r.Status) {
-			return r.ID
-		}
-	}
-	for _, r := range runs {
-		if isFailure(r.Conclusion) {
+		if !completed(r.Status) || isFailure(r.Conclusion) {
 			return r.ID
 		}
 	}

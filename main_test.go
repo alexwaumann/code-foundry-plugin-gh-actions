@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -257,6 +258,25 @@ func node(v ui.View, key string) *ui.Node {
 	return find(v.Nodes)
 }
 
+// logNode is the view's log node (its key changes with the run and selection).
+func logNode(v ui.View) *ui.Node {
+	var find func(ns []ui.Node) *ui.Node
+	find = func(ns []ui.Node) *ui.Node {
+		for i := range ns {
+			if ns[i].Log != nil {
+				return &ns[i]
+			}
+			if ns[i].Section != nil {
+				if n := find(ns[i].Section.Children); n != nil {
+					return n
+				}
+			}
+		}
+		return nil
+	}
+	return find(v.Nodes)
+}
+
 func buttons(v ui.View) map[string]ui.Button {
 	out := map[string]ui.Button{}
 	if n := node(v, "bar"); n != nil {
@@ -349,8 +369,8 @@ func TestRunsSurfaceFailedRun(t *testing.T) {
 	// Log: the failed step's tail, toned, without timestamps or colour codes.
 	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActTab, Action: "tab", Key: tabLog, Value: tabLog})
 	v = hs.view(t)
-	log := node(v, "log-out")
-	if log == nil || log.Log.Title != "go-test · Run make go-test" {
+	log := logNode(v)
+	if log == nil || log.Log.Title != "go-test · Run make go-test" || log.Key != fmt.Sprintf("log-%d-1-all", failRun) {
 		t.Fatalf("log node %+v", log)
 	}
 	var failLine, errLine bool
@@ -372,29 +392,46 @@ func TestRunsSurfaceFailedRun(t *testing.T) {
 	// Back and forth: leaving the tab drops the buffer; coming back re-sends it.
 	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActTab, Action: "tab", Key: tabRuns, Value: tabRuns})
 	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActTab, Action: "tab", Key: tabLog, Value: tabLog})
-	if n := node(hs.view(t), "log-out"); n == nil || len(n.Log.Lines) == 0 {
+	if n := logNode(hs.view(t)); n == nil || len(n.Log.Lines) == 0 {
 		t.Error("returning to the Log tab sent no lines")
 	}
 
-	// Send failure to Claude: thread.send to the panel's thread with a short excerpt.
-	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActClick, Action: "send-failure", Key: "btn-send"})
-	var sent *pluginsdk.InvokeParams
-	for _, inv := range hs.Invocations() {
-		if inv.Command == "thread.send" {
-			sent = &inv
-		}
+	// Send failure to Claude is a command button: the host runs it with the viewer's
+	// panel context, so the thread is the one looking (s-2), not the opener (s-1).
+	send := buttons(hs.view(t))["btn-send"]
+	if send.Action == nil || send.Action.Command == nil || send.Action.Command.Name != "plugin.gh-actions.send-failure" ||
+		send.Action.Command.Args["run"] != fmt.Sprint(failRun) || send.Action.Command.Args["job"] != fmt.Sprint(failJob) {
+		t.Fatalf("send button %+v", send)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := hs.Command(ctx, "send-failure", send.Action.Command.Args, pluginsdk.UiContext{ThreadID: "s-2"})
+	if err != nil || res.Message != "Sent go-test's failure to Claude" {
+		t.Fatalf("send-failure = %q, %v", res.Message, err)
+	}
+	sent := lastSend(hs)
 	if sent == nil {
 		t.Fatal("no thread.send")
 	}
 	text := sent.Args["text"]
-	if sent.Context.ThreadID != "s-1" || len(text) > 4096 {
+	if sent.Context.ThreadID != "s-2" || len(text) > 4096 {
 		t.Errorf("send to %s, %d bytes", sent.Context.ThreadID, len(text))
 	}
 	for _, want := range []string{"Workflow: ci", "Job: go-test", "Step: Run make go-test", "/actions/runs/39125565731/job/117669858813", "--- FAIL: TestCLISettings", "daemon did not become ready", "Error: Process completed with exit code 2.", "investigate"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("excerpt lacks %q:\n%s", want, text)
 		}
+	}
+
+	// The event an older view's button sends: the acting panel's thread (act.context),
+	// else the opener's.
+	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActClick, Action: "send-failure", Key: "btn-send", Context: pluginsdk.UiContext{ThreadID: "s-3"}})
+	if s := lastSend(hs); s == nil || s.Context.ThreadID != "s-3" {
+		t.Errorf("act with context sent to %+v", s)
+	}
+	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActClick, Action: "send-failure", Key: "btn-send"})
+	if s := lastSend(hs); s == nil || s.Context.ThreadID != "s-1" {
+		t.Errorf("act without context sent to %+v", s)
 	}
 
 	if err := hs.Act(context.Background(), pluginsdk.SurfaceAct{Instance: inst, Kind: pluginsdk.ActClick, Action: "select-run", Data: "1"}); err == nil {
@@ -405,14 +442,151 @@ func TestRunsSurfaceFailedRun(t *testing.T) {
 	}
 }
 
+func lastSend(hs *harness) *pluginsdk.InvokeParams {
+	var sent *pluginsdk.InvokeParams
+	for _, inv := range hs.Invocations() {
+		if inv.Command == "thread.send" {
+			sent = &inv
+		}
+	}
+	return sent
+}
+
 func TestSendFailureWithoutPermission(t *testing.T) {
 	hs := start(t, plugintest.Options{Granted: pluginsdk.Permissions{Commands: []string{"pr.checks"}}})
 	realFailure(t, hs.gh)
 	openRuns(t, hs)
 	hs.waitView(t, "the send button", func(v ui.View) bool { return buttons(v)["btn-send"].Key != "" })
-	err := hs.Act(context.Background(), pluginsdk.SurfaceAct{Instance: inst, Kind: pluginsdk.ActClick, Action: "send-failure"})
+	_, err := hs.Command(context.Background(), "send-failure", nil, pluginsdk.UiContext{ThreadID: "s-1"})
 	if pluginsdk.ErrorCode(err) != pluginsdk.CodePermissionDenied || !strings.Contains(err.Error(), "sending the failure") {
 		t.Errorf("err = %v (code %d)", err, pluginsdk.ErrorCode(err))
+	}
+}
+
+// send-failure without an open surface reads the run, its jobs and the failed log from
+// GitHub; --job names a job that must have failed.
+func TestSendFailureCommand(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{})
+	realFailure(t, hs.gh)
+	var runs struct {
+		WorkflowRuns []json.RawMessage `json:"workflow_runs"`
+	}
+	if err := json.Unmarshal(fixture(t, "runs_failed.json"), &runs); err != nil {
+		t.Fatal(err)
+	}
+	hs.gh.set(fmt.Sprintf("api repos/%s/actions/runs/%d", repo, failRun), runs.WorkflowRuns[0], nil)
+	for _, tt := range []struct {
+		args map[string]string
+		want string
+		code int
+	}{
+		{map[string]string{"thread": "s-7"}, "Sent go-test's failure to Claude", 0},
+		{map[string]string{"thread": "s-7", "run": fmt.Sprint(failRun)}, "Sent go-test's failure to Claude", 0},
+		{map[string]string{"thread": "s-7", "run": fmt.Sprint(failRun), "job": fmt.Sprint(failJob)}, "Sent go-test's failure to Claude", 0},
+		{map[string]string{"thread": "s-7", "run": fmt.Sprint(failRun), "job": "117669858838"}, "job frontend of ci #494 did not fail", pluginsdk.CodeUnavailable},
+		{map[string]string{"thread": "s-7", "job": "nope"}, `job "nope" is not a job id`, pluginsdk.CodeInvalidParams},
+	} {
+		res, err := hs.Command(ctx, "send-failure", tt.args, pluginsdk.UiContext{})
+		got := res.Message
+		if err != nil {
+			got = err.Error()
+		}
+		if !strings.Contains(got, tt.want) || pluginsdk.ErrorCode(err) != tt.code {
+			t.Errorf("send-failure %v = %q (code %d), want %q (code %d)", tt.args, got, pluginsdk.ErrorCode(err), tt.want, tt.code)
+			continue
+		}
+		if err == nil {
+			if s := lastSend(hs); s == nil || s.Context.ThreadID != "s-7" || !strings.Contains(s.Args["text"], "Workflow: ci (run #494") {
+				t.Errorf("sent %+v", s)
+			}
+		}
+	}
+}
+
+// Runs GitHub created in the same second: the newest is the higher id. The real pair
+// is ci #506 (cancelled by #507's concurrency group) and #507 (passed), listed by the
+// API with #506 first.
+func TestPickRun(t *testing.T) {
+	var real struct {
+		WorkflowRuns []ghRun `json:"workflow_runs"`
+	}
+	if err := json.Unmarshal(fixture(t, "runs_same_second.json"), &real); err != nil {
+		t.Fatal(err)
+	}
+	if len(real.WorkflowRuns) != 2 || real.WorkflowRuns[0].RunNumber != 506 || !real.WorkflowRuns[0].CreatedAt.Equal(real.WorkflowRuns[1].CreatedAt) {
+		t.Fatalf("fixture: %+v", real.WorkflowRuns)
+	}
+	at := func(s string) time.Time { t, _ := time.Parse(time.RFC3339, s); return t }
+	run := func(id int64, created, status, conclusion string) ghRun {
+		return ghRun{ID: id, CreatedAt: at(created), Status: status, Conclusion: conclusion}
+	}
+	const t0, t1 = "2026-10-18T14:50:04Z", "2026-10-18T14:52:00Z"
+	for _, tt := range []struct {
+		name  string
+		runs  []ghRun
+		order []int64
+		want  int64
+	}{
+		{"real #506 cancelled, #507 passed, same second", real.WorkflowRuns, []int64{39137760005, 39137758970}, 39137760005},
+		{"same second, the newer failed", []ghRun{run(1, t0, "completed", "success"), run(2, t0, "completed", "failure")}, []int64{2, 1}, 2},
+		{"same second, the older failed", []ghRun{run(2, t0, "completed", "success"), run(1, t0, "completed", "failure")}, []int64{2, 1}, 1},
+		{"newest passed, an older one still running", []ghRun{run(1, t0, "in_progress", ""), run(2, t1, "completed", "success")}, []int64{2, 1}, 1},
+		{"newest queued before an older failure", []ghRun{run(1, t0, "completed", "failure"), run(2, t1, "queued", "")}, []int64{2, 1}, 2},
+		{"all passed or cancelled: the newest", []ghRun{run(1, t0, "completed", "cancelled"), run(3, t1, "completed", "success"), run(2, t1, "completed", "cancelled")}, []int64{3, 2, 1}, 3},
+		{"timed out counts as failed", []ghRun{run(1, t0, "completed", "timed_out"), run(2, t1, "completed", "success")}, []int64{2, 1}, 1},
+		{"no runs", nil, nil, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runs := append([]ghRun(nil), tt.runs...)
+			sortRuns(runs)
+			var order []int64
+			for _, r := range runs {
+				order = append(order, r.ID)
+			}
+			if fmt.Sprint(order) != fmt.Sprint(tt.order) {
+				t.Errorf("order %v, want %v", order, tt.order)
+			}
+			if got := pickRun(runs); got != tt.want {
+				t.Errorf("pickRun = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// The gh call lists runs newest first whatever order the API answers in.
+func TestRunsSortedFromAPI(t *testing.T) {
+	f := newFakeGH()
+	const sha = "06b6e1c6f1c081c08ce935832631b4873ffe3882"
+	f.set("api repos/"+repo+"/actions/runs?head_sha="+sha+"&per_page=50", fixture(t, "runs_same_second.json"), nil)
+	runs, err := gh{r: f}.runs(context.Background(), repo, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 || runs[0].RunNumber != 507 || pickRun(runs) != 39137760005 {
+		t.Errorf("runs %+v", runs)
+	}
+}
+
+// A pr surface opened with the scope's fact reads the pull request from it, without
+// asking pr.checks.
+func TestRunsSurfaceFromFacts(t *testing.T) {
+	hs := start(t, plugintest.Options{})
+	realFailure(t, hs.gh)
+	hs.setChecks(nil) // pr.checks would say "no pull request"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := hs.OpenSurfaceWith(ctx, pluginsdk.SurfaceOpen{Instance: inst, Surface: "runs", Context: pluginsdk.UiContext{ThreadID: "s-1"},
+		Facts: map[string]json.RawMessage{"pr": json.RawMessage(`{"repo":"alexwaumann/code-foundry","number":197,"url":"https://github.com/alexwaumann/code-foundry/pull/197"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs.waitView(t, "the runs", func(v ui.View) bool { return node(v, "run-list") != nil })
+	for _, inv := range hs.Invocations() {
+		if inv.Command == "pr.checks" {
+			t.Errorf("asked pr.checks although the facts name the pull request")
+		}
 	}
 }
 
@@ -510,8 +684,8 @@ func TestRunsSurfacePollsAndAppends(t *testing.T) {
 		t.Errorf("pill %+v", v.Header.Pill)
 	}
 	act(t, hs, pluginsdk.SurfaceAct{Kind: pluginsdk.ActTab, Action: "tab", Key: tabLog, Value: tabLog})
-	v = hs.waitView(t, "lint's log", func(v ui.View) bool { n := node(v, "log-out"); return n != nil && len(n.Log.Lines) > 0 })
-	if n := node(v, "log-out"); n.Log.Title != "lint · Run make lint" {
+	v = hs.waitView(t, "lint's log", func(v ui.View) bool { n := logNode(v); return n != nil && len(n.Log.Lines) > 0 })
+	if n := logNode(v); n.Log.Title != "lint · Run make lint" {
 		t.Errorf("log title %q", n.Log.Title)
 	}
 
@@ -521,14 +695,14 @@ func TestRunsSurfacePollsAndAppends(t *testing.T) {
 	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
 		for _, a := range h.Appends() {
 			for _, l := range a.Lines {
-				if l.Text == "--- FAIL: TestX (0.00s)" && l.Tone == "error" && a.Key == "log-out" {
+				if l.Text == "--- FAIL: TestX (0.00s)" && l.Tone == "error" && a.Key == fmt.Sprintf("log-%d-1-all", failRun) {
 					return true
 				}
 			}
 		}
 		return false
 	})
-	if n := node(hs.view(t), "log-out"); n == nil || len(n.Log.Lines) != 0 {
+	if n := logNode(hs.view(t)); n == nil || len(n.Log.Lines) != 0 {
 		t.Errorf("the view re-sent the log instead of keeping the buffer: %+v", n)
 	}
 	if n := node(hs.view(t), "log-jobs"); n == nil || len(n.Chips.Chips) != 2 {
@@ -681,6 +855,11 @@ func TestFlagLifecycle(t *testing.T) {
 	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
 		fs := flagsFor(h, "s-1")
 		return len(fs) == 3 && fs[2].Reason == "go-lint failed"
+	})
+	// The state is saved just after SetFlag returns: wait for it before restarting.
+	hs.WaitFor(5*time.Second, func(*plugintest.Host) bool {
+		data, _ := os.ReadFile(filepath.Join(dir, "flags.json"))
+		return strings.Contains(string(data), "/117669858971")
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

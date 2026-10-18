@@ -79,6 +79,7 @@ func (a *app) plugin() pluginsdk.Plugin {
 			"rerun":        a.rerunAll,
 			"cancel":       a.cancel,
 			"open":         a.open,
+			"send-failure": a.sendFailure,
 		},
 		Surfaces: map[string]pluginsdk.SurfaceFactory{"runs": a.newRuns},
 	}

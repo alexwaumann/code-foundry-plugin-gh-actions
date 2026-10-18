@@ -6,11 +6,9 @@ failed at which step, the failed step's log, and the buttons to rerun, cancel, o
 the failure to Claude. It flags the thread when a run fails.
 
 ```
-code-foundry plugin install gh-actions
+code-foundry plugin install gh-actions --enable
+code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.1.1 --enable   # a release directly
 ```
-
-(Until `plugin install` ships in Code Foundry, unpack a release tarball or clone this
-repository and run `code-foundry plugin dev <folder> --yes`; see Development.)
 
 ## What it shows
 
@@ -20,16 +18,20 @@ checks (one panel per pull request, shared by the threads on it):
 - **Header**: the pull request's number and title, the selected run's workflow, a status
   pill (passed, failed, running, queued, cancelled, …), how long it took or a live
   elapsed time, the head commit, and buttons to open the run on GitHub and refresh.
-- **Runs**: every workflow run of the pull request's head commit with its status, run
-  number and attempt, event, and duration. Click one to see its jobs.
+- **Runs**: every workflow run of the pull request's head commit, newest first (runs
+  created in the same second: the higher run id first), with its status, run number and
+  attempt, event, and duration. The one selected at first is the newest that failed or
+  is still going, else the newest. Click one to see its jobs.
 - **Jobs**: the selected run's jobs with status and duration; a failed job names the step
   that failed. Click one to see its log.
 - **Log**: the failed steps' log tail (the last 200 lines of each failed job, timestamps
   and colour codes stripped, error lines red, warnings amber). While a run is still going,
   each job that fails is appended as it finishes.
-- **Actions**: *Send failure to Claude* sends the panel's thread a request to investigate,
-  with the workflow, job, step, run URL and up to 60 log lines (the error lines and the
-  last lines, at most 4 KB). *Rerun failed* and *Rerun all* for a finished run, *Cancel*
+- **Actions**: *Send failure to Claude* sends the thread you are looking at a request to
+  investigate, with the workflow, job, step, run URL and up to 60 log lines (the error
+  lines and the last lines, at most 4 KB). The panel is shared by every thread on the pull
+  request, so the button runs the `send-failure` command, which the app runs with the
+  viewing panel's thread. *Rerun failed* and *Rerun all* for a finished run, *Cancel*
   (asks first) for one in progress.
 
 The panel polls GitHub every 15 s while a run is in progress and someone looks, every
@@ -53,13 +55,14 @@ a word):
 | `rerun` | Rerun every job of the newest finished run |
 | `cancel` | Cancel the run in progress (asks first; `--yes` on the CLI) |
 | `open` | Open the run on GitHub: the one in progress, else the failed one, else the newest |
+| `send-failure` | Send the newest failed run's (or `--run`'s) failed step log to Claude in the thread; `--job <id>` picks the job |
 
 ## Permissions and why
 
 | Permission | Why |
 |---|---|
 | commands `pr.checks` | Find the thread's pull request and its checks (the flag, and the panel's pull request when it is opened from the palette) |
-| commands `thread.send` | *Send failure to Claude* |
+| commands `thread.send` | *Send failure to Claude* (`send-failure`) |
 | commands `view.open.url` | The `open` command opens the run in your browser |
 | events `threads`, `gh` | Know the threads and when GitHub polling saw new pull requests or checks, to flag failures |
 | `threadStatus` | The attention flag on a thread whose run failed |
@@ -77,15 +80,24 @@ make build                                     # bin/gh-actions
 code-foundry plugin dev "$PWD" --follow=false --yes
 code-foundry plugin list --context-thread <thread>      # runs(on) where the PR has Actions checks
 code-foundry plugin surface gh-actions runs --thread <thread>   # the view and what acts (run twice: the first is "Loading")
-code-foundry plugin act gh-actions runs tab --key jobs --thread <thread>
-code-foundry plugin act gh-actions runs select-run --thread <thread>
+code-foundry plugin act gh-actions runs tab --key tab-jobs --thread <thread>
+code-foundry plugin act gh-actions runs --key run-<run id> --thread <thread>
+code-foundry plugin gh-actions send-failure [<run id>] --thread <thread>   # what the button runs
 code-foundry plugin gh-actions open --thread <thread>
 code-foundry plugin logs gh-actions --lines 50
 make build && code-foundry plugin restart gh-actions   # after every change
 make test
 ```
 
-Tested end to end on 2026-10-18 against a dev Code Foundry (8ab4f619) in an isolated
+0.1.1 was tested end to end on 2026-10-18 against a dev Code Foundry (73685d8b) in an
+isolated `CODE_FOUNDRY_HOME`: two threads on code-foundry's PR #196 (`cf/plugins-7-registry`)
+share one `pr:alexwaumann/code-foundry#196` panel, opened by the first; it showed `ci #508`
+passed and selected, its jobs (1 passed, 3 skipped) and "Nothing failed in this run".
+`send-failure` from the second thread said "no failed run for …#196 at 73685d8"; with
+`--run 39130450084` (a failed `ci #498`) it read the run, its jobs and the failed log from
+GitHub and sent the excerpt to the second thread, not the panel's opener.
+
+0.1.0 was tested end to end on 2026-10-18 against a dev Code Foundry (8ab4f619) in an isolated
 `CODE_FOUNDRY_HOME`: a thread on code-foundry's `cf/plugins-4-skill` branch (PR #197,
 run `ci #496`: `attested` passed, three jobs skipped) showed the run, its jobs, "Nothing
 failed in this run" on Log, and `open` opened the run. A draft pull request here with a
@@ -96,7 +108,30 @@ after a plugin restart), and pushing a passing commit cleared the flag.
 
 Releases: bump `version` in `plugin.json`, tag `v<version>` and push the tag; the release
 workflow tests, builds the darwin/arm64 and darwin/amd64 tarballs (`make dist`) and
-attaches them with `SHA256SUMS`.
+attaches them with `SHA256SUMS`. Then `make registry-entry` writes `dist/gh-actions.json`
+for the registry pull request.
+
+## Changelog
+
+### 0.1.1
+
+- The run selected at first is the newest that failed or is still going, else the
+  newest; runs created in the same second order by run id, so a passing run is no longer
+  hidden behind the run its concurrency group cancelled (code-foundry `ci #506`/`#507`).
+- *Send failure to Claude* is a command (`send-failure`, also in the palette and CLI): the
+  app runs the view's button with the thread you are looking at. Before, it went to the
+  thread that first opened the shared pull request panel. An event from an older view
+  uses the acting panel's thread when the app says which.
+- Tab keys `tab-runs`, `tab-jobs`, `tab-log` (`plugin act … tab --key tab-jobs`); each run
+  attempt and job selection gets its own log node, so a rerun's log never continues the
+  last attempt's lines.
+- Same permissions as 0.1.0: updating keeps it enabled.
+- Built against the Code Foundry SDK at 73685d8b; `make registry-entry` writes the registry
+  entry.
+
+### 0.1.0
+
+- First release.
 
 ## License
 

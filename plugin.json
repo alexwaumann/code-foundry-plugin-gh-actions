@@ -1,7 +1,7 @@
 {
   "name": "gh-actions",
   "displayName": "GitHub Actions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GitHub Actions runs, jobs and failed-step logs for the selected thread's pull request: rerun, cancel, send a failure to Claude, and a thread flag when a run fails.",
   "protocol": 1,
   "exec": ["bin/gh-actions"],
@@ -44,6 +44,18 @@
       "args": [
         { "name": "run", "positional": true, "description": "Run id (default: the newest run in progress on the pull request's head)" },
         { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    },
+    {
+      "name": "send-failure",
+      "title": "Send Failure to Claude",
+      "description": "Send the failed step's log of the newest failed GitHub Actions run of the thread's pull request (or --run, --job) to Claude in the thread.",
+      "when": "\"github-actions\" in pr.checks.provider",
+      "timeoutSeconds": 60,
+      "args": [
+        { "name": "run", "positional": true, "description": "Run id (default: the newest failed run on the pull request's head)" },
+        { "name": "job", "description": "Job id (default: the run's first failed job with a log)" },
+        { "name": "thread", "context": "thread", "description": "The thread to send to, whose pull request it is (default: the active one)" }
       ]
     },
     {

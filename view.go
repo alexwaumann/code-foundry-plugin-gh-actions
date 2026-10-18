@@ -17,13 +17,14 @@ func (s *runsSurface) render() error {
 	defer s.renderMu.Unlock()
 	s.mu.Lock()
 	v, appends := s.view()
+	logKey := s.bufKey
 	s.mu.Unlock()
 	if err := s.h.UpdateView(s.open.Instance, v); err != nil {
 		s.h.Log().Error("view refused", "instance", s.open.Instance, "err", err)
 		return err
 	}
-	if len(appends) > 0 {
-		if err := s.h.AppendLogLines(s.open.Instance, "log-out", appends...); err != nil {
+	if len(appends) > 0 && logKey != "" {
+		if err := s.h.AppendLogLines(s.open.Instance, logKey, appends...); err != nil {
 			s.h.Log().Warn("appending the log", "err", err)
 		}
 	}
@@ -164,8 +165,11 @@ func (s *runsSurface) actionBar() (ui.Node, bool) {
 	args := map[string]string{"run": strconv.FormatInt(run.ID, 10)}
 	var b []ui.Button
 	if completed(run.Status) {
-		if _, _, ok := s.failureLocked(); ok && isFailure(run.Conclusion) {
-			b = append(b, ui.EventButton("btn-send", "Send failure to Claude", "send-failure").WithStyle(ui.ButtonAttention).WithIcon("send"))
+		if job, _, ok := s.failureLocked(); ok && isFailure(run.Conclusion) {
+			// A command, not an event: one instance serves every thread on the pull
+			// request, and the host runs a command button with the viewer's thread.
+			send := map[string]string{"run": args["run"], "job": strconv.FormatInt(job.ID, 10)}
+			b = append(b, ui.CommandButton("btn-send", "Send failure to Claude", "plugin.gh-actions.send-failure", send).WithStyle(ui.ButtonAttention).WithIcon("send"))
 		}
 		if isFailure(run.Conclusion) || run.Conclusion == "cancelled" {
 			b = append(b, ui.CommandButton("btn-rerun-failed", "Rerun failed", "plugin.gh-actions.rerun-failed", args).WithStyle(ui.ButtonOutline).WithIcon("rotate-ccw"))
@@ -363,7 +367,12 @@ func (s *runsSurface) logNodes() ([]ui.Node, []pluginsdk.AppendLine) {
 		s.bufKey = ""
 		return append(nodes, ui.NewProgress("log-loading", "Fetching the failed step's log", nil)), nil
 	}
-	key := fmt.Sprintf("%d/%d", s.selRun, s.selJob)
+	// One node key per run attempt and selection: a rerun's log starts a new buffer.
+	sel := "all"
+	if s.selJob != 0 {
+		sel = strconv.FormatInt(s.selJob, 10)
+	}
+	key := fmt.Sprintf("log-%d-%d-%s", s.selRun, max(run.RunAttempt, 1), sel)
 	logNode := &ui.Log{Title: clip(title, 200), Rows: 24, Wrap: true, Truncated: truncated}
 	var appends []pluginsdk.AppendLine
 	if s.bufKey != key {
@@ -379,7 +388,7 @@ func (s *runsSurface) logNodes() ([]ui.Node, []pluginsdk.AppendLine) {
 			}
 		}
 	}
-	return append(nodes, ui.Node{Key: "log-out", Log: logNode}), appends
+	return append(nodes, ui.Node{Key: key, Log: logNode}), appends
 }
 
 func contains(xs []int64, x int64) bool {

@@ -1,7 +1,7 @@
 # Publishes a release when a tag v<version> is pushed: tests, checks the tag against
 # plugin.json's version, builds the darwin/arm64 and darwin/amd64 tarballs (make dist)
-# and attaches them and SHA256SUMS to a GitHub release. Copy to .github/workflows/ in
-# the plugin's repository.
+# and attaches them and SHA256SUMS to a GitHub release.
+# Then `make registry-entry` writes the registry entry.
 name: release
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -32,4 +32,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
-            --title "$GITHUB_REF_NAME" --notes "Install: code-foundry plugin install $(jq -r .name plugin.json)"
+            --title "$GITHUB_REF_NAME" \
+            --notes "$(jq -r '.displayName // .name' plugin.json) $GITHUB_REF_NAME for Code Foundry: one tarball per Mac architecture (plugin.json and the executable at its root) and their SHA-256 sums."

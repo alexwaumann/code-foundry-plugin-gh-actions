@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	tabRuns = "runs"
-	tabJobs = "jobs"
-	tabLog  = "log"
+	// Tab keys share the view's key namespace with nodes ("run-list", "job-list").
+	tabRuns = "tab-runs"
+	tabJobs = "tab-jobs"
+	tabLog  = "tab-log"
 
 	// logTail is how many lines of one job's failed steps the Log tab keeps.
 	logTail = 200
@@ -55,8 +56,9 @@ type runsSurface struct {
 	logErrs map[int64]string
 	tab     string
 
-	// What the host's buffer of the log node holds: the selection it was sent for and
-	// the jobs whose lines are in it.
+	// What the host's buffer of the log node holds: the node's key (one per run attempt
+	// and job selection, so a new run never shows the last one's lines) and the jobs
+	// whose lines are in it.
 	bufKey  string
 	bufJobs []int64
 }
@@ -328,7 +330,14 @@ func (s *runsSurface) Act(ctx context.Context, act pluginsdk.SurfaceAct) error {
 		s.wakeUp()
 		return nil
 	case "send-failure":
-		return s.sendFailure(ctx)
+		// The view sends this as a command (plugin.gh-actions.send-failure), which the
+		// host runs with the viewer's thread. An older view's event button lands here:
+		// the acting panel's thread, else (a host without act.context) the opener's.
+		thread := act.Context.ThreadID
+		if thread == "" {
+			thread = s.open.Context.ThreadID
+		}
+		return s.sendFailure(ctx, thread)
 	}
 	return fmt.Errorf("unknown action %q", act.Action)
 }
@@ -346,8 +355,8 @@ func (s *runsSurface) job(id int64) (ghJob, bool) {
 	return ghJob{}, false
 }
 
-// sendFailure sends the selected run's failure to the thread that opened the panel.
-func (s *runsSurface) sendFailure(ctx context.Context) error {
+// sendFailure sends the selected run's failure to a thread.
+func (s *runsSurface) sendFailure(ctx context.Context, thread string) error {
 	s.mu.Lock()
 	run, _ := findRun(s.runs, s.selRun)
 	job, lines, ok := s.failureLocked()
@@ -355,16 +364,40 @@ func (s *runsSurface) sendFailure(ctx context.Context) error {
 	if !ok {
 		return errors.New("no failed step with a log in this run yet")
 	}
-	thread := s.open.Context.ThreadID
 	if thread == "" {
 		return errors.New("no thread to send to")
 	}
-	text := failureExcerpt(run, job, lines)
-	if _, err := s.h.Invoke(ctx, "thread.send", map[string]string{"text": text}, pluginsdk.UiContext{ThreadID: thread}); err != nil {
-		return fmt.Errorf("sending the failure: %w", err)
+	if err := sendExcerpt(ctx, s.h, thread, run, job, lines); err != nil {
+		return err
 	}
 	_ = s.h.ToastIn(s.open.Instance, pluginsdk.ToastInfo, "Sent "+job.Name+"'s failure to Claude")
 	return nil
+}
+
+// sendExcerpt sends a failed job's excerpt into a thread.
+func sendExcerpt(ctx context.Context, h *pluginsdk.Host, thread string, run ghRun, job ghJob, lines []logLine) error {
+	text := failureExcerpt(run, job, lines)
+	if _, err := h.Invoke(ctx, "thread.send", map[string]string{"text": text}, pluginsdk.UiContext{ThreadID: thread}); err != nil {
+		return fmt.Errorf("sending the failure: %w", err)
+	}
+	return nil
+}
+
+// cachedFailure is a failed job of run and its log as an open surface of the pull
+// request already has them: job, else the first failed job with a log.
+func (s *runsSurface) cachedFailure(runID, jobID int64) (ghRun, ghJob, []logLine, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := findRun(s.runs, runID)
+	if !ok || s.jobsFor != runID {
+		return ghRun{}, ghJob{}, nil, false
+	}
+	for _, j := range s.failedJobs() {
+		if (jobID == 0 || j.ID == jobID) && s.logs[j.ID] != nil {
+			return run, j, s.logs[j.ID], true
+		}
+	}
+	return ghRun{}, ghJob{}, nil, false
 }
 
 // failureLocked picks the failed job to send: the selected one if it failed, else the

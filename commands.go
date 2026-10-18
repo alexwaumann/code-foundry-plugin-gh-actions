@@ -149,6 +149,89 @@ func (a *app) open(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Command
 	return result("Opened "+url, t)
 }
 
+// sendFailure sends a failed job's log excerpt to Claude in the thread: the newest
+// failed run's (or --run's) first failed job with a log (or --job). The view's "Send
+// failure to Claude" button runs it, so the host fills --thread with the thread the
+// user is looking at, not the one that opened the shared pull request panel.
+func (a *app) sendFailure(ctx context.Context, h *pluginsdk.Host, req pluginsdk.CommandRequest) (pluginsdk.CommandResult, error) {
+	var jobID int64
+	if s := req.Arg("job"); s != "" {
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || id <= 0 {
+			return pluginsdk.CommandResult{}, pluginsdk.NewError(pluginsdk.CodeInvalidParams, "job %q is not a job id", s)
+		}
+		jobID = id
+	}
+	t, err := a.resolve(ctx, h, req, "no failed run", newestWhere(func(r ghRun) bool {
+		return completed(r.Status) && isFailure(r.Conclusion)
+	}))
+	if err != nil {
+		return pluginsdk.CommandResult{}, err
+	}
+	run, job, lines, err := a.failure(ctx, t, jobID)
+	if err != nil {
+		return pluginsdk.CommandResult{}, err
+	}
+	if err := sendExcerpt(ctx, h, t.Thread, run, job, lines); err != nil {
+		return pluginsdk.CommandResult{}, err
+	}
+	t.Run = run
+	return result("Sent "+job.Name+"'s failure to Claude", t)
+}
+
+// failure finds a failed job of t.Run and its failed steps' log: from an open surface
+// of the pull request when it has them, else from GitHub.
+func (a *app) failure(ctx context.Context, t target, jobID int64) (ghRun, ghJob, []logLine, error) {
+	a.mu.Lock()
+	var open []*runsSurface
+	for _, s := range a.surfaces {
+		open = append(open, s)
+	}
+	a.mu.Unlock()
+	for _, s := range open {
+		if s.isFor(t.PR.Repo, t.PR.Number) {
+			if run, job, lines, ok := s.cachedFailure(t.Run.ID, jobID); ok {
+				return run, job, lines, nil
+			}
+		}
+	}
+	run := t.Run
+	if run.Name == "" { // --run: only its id is known
+		r, err := a.gh.run(ctx, t.PR.Repo, run.ID)
+		if err != nil {
+			return run, ghJob{}, nil, fmt.Errorf("reading run %d: %w", run.ID, err)
+		}
+		run = r
+	}
+	jobs, err := a.gh.jobs(ctx, t.PR.Repo, run.ID)
+	if err != nil {
+		return run, ghJob{}, nil, fmt.Errorf("reading the jobs of %s: %w", runLabel(run), err)
+	}
+	for _, j := range jobs {
+		if jobID != 0 && j.ID != jobID {
+			continue
+		}
+		if !completed(j.Status) || !isFailure(j.Conclusion) {
+			if jobID != 0 {
+				return run, ghJob{}, nil, pluginsdk.NewError(pluginsdk.CodeUnavailable, "job %s of %s did not fail", j.Name, runLabel(run))
+			}
+			continue
+		}
+		lines, err := a.gh.failedLog(ctx, t.PR.Repo, j.ID)
+		if err != nil {
+			return run, ghJob{}, nil, fmt.Errorf("reading %s's log: %w", j.Name, err)
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		return run, j, tail(lines, logTail), nil
+	}
+	if jobID != 0 {
+		return run, ghJob{}, nil, pluginsdk.NewError(pluginsdk.CodeNotFound, "no job %d in %s", jobID, runLabel(run))
+	}
+	return run, ghJob{}, nil, pluginsdk.NewError(pluginsdk.CodeUnavailable, "no failed step with a log in %s", runLabel(run))
+}
+
 // changed wakes what shows the pull request's runs after a rerun or a cancel: its open
 // surfaces now, the flag watcher on its next sweeps.
 func (a *app) changed(t target) {

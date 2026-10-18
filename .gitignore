@@ -1,2 +1,4 @@
 /bin/
 /dist/
+# `go build` in the module root writes a binary named after the module; use `make build`.
+/code-foundry-plugin-*

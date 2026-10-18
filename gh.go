@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -152,7 +151,17 @@ func (g gh) pull(ctx context.Context, repo string, number int) (ghPull, error) {
 	return p, decode(out, &p)
 }
 
-// runs lists the workflow runs of a commit, newest first.
+// run reads one workflow run.
+func (g gh) run(ctx context.Context, repo string, id int64) (ghRun, error) {
+	var r ghRun
+	out, err := g.r.Run(ctx, "api", fmt.Sprintf("repos/%s/actions/runs/%d", repo, id))
+	if err != nil {
+		return r, err
+	}
+	return r, decode(out, &r)
+}
+
+// runs lists the workflow runs of a commit, newest first (sortRuns).
 func (g gh) runs(ctx context.Context, repo, sha string) ([]ghRun, error) {
 	var res struct {
 		WorkflowRuns []ghRun `json:"workflow_runs"`
@@ -164,7 +173,7 @@ func (g gh) runs(ctx context.Context, repo, sha string) ([]ghRun, error) {
 	if err := decode(out, &res); err != nil {
 		return nil, err
 	}
-	sort.SliceStable(res.WorkflowRuns, func(i, j int) bool { return res.WorkflowRuns[i].CreatedAt.After(res.WorkflowRuns[j].CreatedAt) })
+	sortRuns(res.WorkflowRuns)
 	return res.WorkflowRuns, nil
 }
 
