@@ -7,7 +7,7 @@ the failure to Claude. It flags the thread when a run fails.
 
 ```
 code-foundry plugin install gh-actions --enable
-code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.1.1 --enable   # a release directly
+code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.1.2 --enable   # a release directly
 ```
 
 ## What it shows
@@ -112,6 +112,14 @@ attaches them with `SHA256SUMS`. Then `make registry-entry` writes `dist/gh-acti
 for the registry pull request.
 
 ## Changelog
+
+### 0.1.2
+
+- Built against the released Code Foundry SDK, `pluginsdk` v0.1.0 (code-foundry
+  `4ed617fd`): the surface's `Close` takes the close reason the host now sends. No
+  behaviour change; same permissions as 0.1.1, so updating keeps it enabled.
+- Tests: the harness shuts the plugin down before its data dir is removed (`TestFlagSweep`
+  could fail under `-race` when the flag watcher wrote `flags.json` during cleanup).
 
 ### 0.1.1
 

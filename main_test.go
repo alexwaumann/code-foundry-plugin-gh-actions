@@ -190,6 +190,13 @@ func start(t *testing.T, opts plugintest.Options, tweaks ...func(*app)) *harness
 		return pluginsdk.CommandResult{}, pluginsdk.NewError(pluginsdk.CodeNotFound, "unknown command %s", p.Command)
 	}
 	hs.Host = plugintest.Start(t, hs.app.plugin(), opts)
+	// Stop the plugin (and so the flag watcher, which writes flags.json) before the
+	// data dir is removed.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(ctx)
+	})
 	return hs
 }
 

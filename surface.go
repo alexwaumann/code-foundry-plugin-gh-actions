@@ -276,7 +276,7 @@ func (s *runsSurface) Visibility(visible bool) {
 	}
 }
 
-func (s *runsSurface) Close() {
+func (s *runsSurface) Close(pluginsdk.CloseReason) {
 	s.cancel()
 	s.a.mu.Lock()
 	delete(s.a.surfaces, s.open.Instance)
