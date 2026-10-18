@@ -1,0 +1,67 @@
+go-test	Run make go-test	﻿2026-10-18T12:02:33.1529470Z ##[group]Run make go-test
+go-test	Run make go-test	2026-10-18T12:02:33.1529850Z ^[[36;1mmake go-test^[[0m
+go-test	Run make go-test	2026-10-18T12:02:33.1583980Z shell: /bin/bash -e {0}
+go-test	Run make go-test	2026-10-18T12:02:33.1584280Z env:
+go-test	Run make go-test	2026-10-18T12:02:33.1584580Z   GOTOOLCHAIN: local
+go-test	Run make go-test	2026-10-18T12:02:33.1584890Z ##[endgroup]
+go-test	Run make go-test	2026-10-18T12:02:33.2371990Z go test -race ./...
+go-test	Run make go-test	2026-10-18T12:04:10.5204240Z --- FAIL: TestCLINotifyReachesWatcher (5.05s)
+go-test	Run make go-test	2026-10-18T12:04:10.5358250Z     e2e_test.go:156: daemon did not become ready
+go-test	Run make go-test	2026-10-18T12:04:10.5421400Z     e2e_test.go:36: daemon.Run: db: migration 0026_projects.sql: context canceled
+go-test	Run make go-test	2026-10-18T12:04:10.5524560Z --- FAIL: TestCLISettings (5.03s)
+go-test	Run make go-test	2026-10-18T12:04:10.5634220Z     settings_e2e_test.go:28: daemon did not become ready
+go-test	Run make go-test	2026-10-18T12:04:10.5765760Z     e2e_test.go:36: daemon.Run: db: migration 0026_projects.sql: context canceled
+go-test	Run make go-test	2026-10-18T12:04:10.5865520Z FAIL
+go-test	Run make go-test	2026-10-18T12:04:10.5974010Z FAIL	github.com/alexwaumann/code-foundry/cmd/code-foundry	22.192s
+go-test	Run make go-test	2026-10-18T12:04:10.6084330Z ?   	github.com/alexwaumann/code-foundry/cmd/fakeclaude	[no test files]
+go-test	Run make go-test	2026-10-18T12:04:10.6128070Z ?   	github.com/alexwaumann/code-foundry/docs	[no test files]
+go-test	Run make go-test	2026-10-18T12:04:10.6230660Z ?   	github.com/alexwaumann/code-foundry/gen/go/codefoundry/v1	[no test files]
+go-test	Run make go-test	2026-10-18T12:04:10.6332330Z ?   	github.com/alexwaumann/code-foundry/gen/go/codefoundry/v1/codefoundryv1connect	[no test files]
+go-test	Run make go-test	2026-10-18T12:04:59.9897060Z ok  	github.com/alexwaumann/code-foundry/gui	1.976s
+go-test	Run make go-test	2026-10-18T12:05:12.0421360Z ok  	github.com/alexwaumann/code-foundry/internal/api	14.019s
+go-test	Run make go-test	2026-10-18T12:05:12.0422710Z ok  	github.com/alexwaumann/code-foundry/internal/bus	1.174s
+go-test	Run make go-test	2026-10-18T12:05:12.0436350Z ok  	github.com/alexwaumann/code-foundry/internal/claudestream	1.594s
+go-test	Run make go-test	2026-10-18T12:05:12.0437490Z ?   	github.com/alexwaumann/code-foundry/internal/claudestream/fakeclaude	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:14.7328660Z ok  	github.com/alexwaumann/code-foundry/internal/client	14.688s
+go-test	Run make go-test	2026-10-18T12:05:14.7430580Z ok  	github.com/alexwaumann/code-foundry/internal/command	10.489s
+go-test	Run make go-test	2026-10-18T12:05:14.7532600Z ?   	github.com/alexwaumann/code-foundry/internal/command/all	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:14.7638330Z ?   	github.com/alexwaumann/code-foundry/internal/command/commandtest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:18.9465720Z ok  	github.com/alexwaumann/code-foundry/internal/daemon	7.535s
+go-test	Run make go-test	2026-10-18T12:05:26.6021540Z ok  	github.com/alexwaumann/code-foundry/internal/db	14.551s
+go-test	Run make go-test	2026-10-18T12:05:26.6063850Z ?   	github.com/alexwaumann/code-foundry/internal/db/dbtest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:26.6073490Z ok  	github.com/alexwaumann/code-foundry/internal/fsx	2.137s
+go-test	Run make go-test	2026-10-18T12:05:26.6206520Z ok  	github.com/alexwaumann/code-foundry/internal/fuzzy	1.183s
+go-test	Run make go-test	2026-10-18T12:05:26.6220520Z ok  	github.com/alexwaumann/code-foundry/internal/guide	1.197s
+go-test	Run make go-test	2026-10-18T12:05:26.6237110Z ok  	github.com/alexwaumann/code-foundry/internal/model	1.280s
+go-test	Run make go-test	2026-10-18T12:05:26.6239500Z ok  	github.com/alexwaumann/code-foundry/internal/paths	1.191s
+go-test	Run make go-test	2026-10-18T12:05:26.6241890Z ok  	github.com/alexwaumann/code-foundry/internal/pricing	1.212s
+go-test	Run make go-test	2026-10-18T12:05:26.6243370Z ok  	github.com/alexwaumann/code-foundry/internal/skills	1.356s
+go-test	Run make go-test	2026-10-18T12:05:28.3887540Z ok  	github.com/alexwaumann/code-foundry/internal/store/action	6.849s
+go-test	Run make go-test	2026-10-18T12:05:28.3889770Z ?   	github.com/alexwaumann/code-foundry/internal/store/action/actiontest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:28.3893650Z ok  	github.com/alexwaumann/code-foundry/internal/store/clone	1.274s
+go-test	Run make go-test	2026-10-18T12:05:28.3894650Z ?   	github.com/alexwaumann/code-foundry/internal/store/clone/clonetest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:43.1761720Z ok  	github.com/alexwaumann/code-foundry/internal/store/gh	19.908s
+go-test	Run make go-test	2026-10-18T12:05:43.1865560Z ?   	github.com/alexwaumann/code-foundry/internal/store/gh/ghtest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:43.1895550Z ok  	github.com/alexwaumann/code-foundry/internal/store/gitops	11.481s
+go-test	Run make go-test	2026-10-18T12:05:43.1896460Z ?   	github.com/alexwaumann/code-foundry/internal/store/gitops/gitopstest	[no test files]
+go-test	Run make go-test	2026-10-18T12:05:43.1916700Z ok  	github.com/alexwaumann/code-foundry/internal/store/newproject	1.598s
+go-test	Run make go-test	2026-10-18T12:05:43.1917410Z ?   	github.com/alexwaumann/code-foundry/internal/store/newproject/newprojecttest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:45.0367710Z ok  	github.com/alexwaumann/code-foundry/internal/store/project	73.671s
+go-test	Run make go-test	2026-10-18T12:06:45.0369680Z ?   	github.com/alexwaumann/code-foundry/internal/store/project/projecttest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:45.0370450Z ok  	github.com/alexwaumann/code-foundry/internal/store/settings	1.848s
+go-test	Run make go-test	2026-10-18T12:06:45.0371070Z ?   	github.com/alexwaumann/code-foundry/internal/store/settings/settingstest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:45.0371710Z ok  	github.com/alexwaumann/code-foundry/internal/store/terminal	4.340s
+go-test	Run make go-test	2026-10-18T12:06:46.2802450Z ok  	github.com/alexwaumann/code-foundry/internal/store/terminal/terminaltest	1.203s
+go-test	Run make go-test	2026-10-18T12:06:46.2803290Z ok  	github.com/alexwaumann/code-foundry/internal/store/thread	60.969s
+go-test	Run make go-test	2026-10-18T12:06:46.2814830Z ?   	github.com/alexwaumann/code-foundry/internal/store/thread/threadtest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:46.2818430Z ok  	github.com/alexwaumann/code-foundry/internal/store/update	1.580s
+go-test	Run make go-test	2026-10-18T12:06:46.2820340Z ?   	github.com/alexwaumann/code-foundry/internal/store/update/updatetest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:46.2821290Z ok  	github.com/alexwaumann/code-foundry/internal/store/workspace	7.352s
+go-test	Run make go-test	2026-10-18T12:06:46.2822160Z ?   	github.com/alexwaumann/code-foundry/internal/store/workspace/workspacetest	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:46.2825700Z ?   	github.com/alexwaumann/code-foundry/internal/termlabel	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:46.2826390Z ok  	github.com/alexwaumann/code-foundry/internal/theme	1.138s
+go-test	Run make go-test	2026-10-18T12:06:46.2827130Z ?   	github.com/alexwaumann/code-foundry/internal/version	[no test files]
+go-test	Run make go-test	2026-10-18T12:06:46.2827740Z ok  	github.com/alexwaumann/code-foundry/scripts	11.977s
+go-test	Run make go-test	2026-10-18T12:06:46.2828100Z FAIL
+go-test	Run make go-test	2026-10-18T12:06:46.9739810Z make: *** [go-test] Error 1
+go-test	Run make go-test	2026-10-18T12:06:46.9844990Z ##[error]Process completed with exit code 2.

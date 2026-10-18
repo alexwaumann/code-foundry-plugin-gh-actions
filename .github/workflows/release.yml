@@ -1,0 +1,35 @@
+# Publishes a release when a tag v<version> is pushed: tests, checks the tag against
+# plugin.json's version, builds the darwin/arm64 and darwin/amd64 tarballs (make dist)
+# and attaches them and SHA256SUMS to a GitHub release. Copy to .github/workflows/ in
+# the plugin's repository.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Check the tag against plugin.json
+        run: |
+          want="v$(jq -r .version plugin.json)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "tag $GITHUB_REF_NAME, but plugin.json's version makes it $want" >&2
+            exit 1
+          fi
+      - name: Package
+        run: make dist
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$GITHUB_REF_NAME" --notes "Install: code-foundry plugin install $(jq -r .name plugin.json)"

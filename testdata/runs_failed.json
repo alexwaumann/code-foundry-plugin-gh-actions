@@ -1,0 +1,21 @@
+{
+ "total_count": 1,
+ "workflow_runs": [
+  {
+   "id": 39125565731,
+   "name": "ci",
+   "display_title": "Merge pull request #195 from alexwaumann/cf/fix-send-spawn-flake",
+   "run_number": 494,
+   "run_attempt": 1,
+   "event": "push",
+   "status": "completed",
+   "conclusion": "failure",
+   "html_url": "https://github.com/alexwaumann/code-foundry/actions/runs/39125565731",
+   "created_at": "2026-10-18T12:01:16Z",
+   "run_started_at": "2026-10-18T12:01:16Z",
+   "updated_at": "2026-10-18T12:06:55Z",
+   "head_sha": "0dcac719766165d1a8622b257ff4a047e5162d2f",
+   "head_branch": "main"
+  }
+ ]
+}

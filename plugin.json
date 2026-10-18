@@ -1,0 +1,69 @@
+{
+  "name": "gh-actions",
+  "displayName": "GitHub Actions",
+  "version": "0.1.0",
+  "description": "GitHub Actions runs, jobs and failed-step logs for the selected thread's pull request: rerun, cancel, send a failure to Claude, and a thread flag when a run fails.",
+  "protocol": 1,
+  "exec": ["bin/gh-actions"],
+  "permissions": {
+    "commands": ["thread.send", "view.open.url", "pr.checks"],
+    "events": ["gh", "threads"],
+    "threadStatus": true,
+    "secrets": false
+  },
+  "commands": [
+    {
+      "name": "rerun-failed",
+      "title": "Rerun Failed Jobs",
+      "description": "Rerun the failed jobs of the newest failed GitHub Actions run of the thread's pull request (or of --run).",
+      "when": "\"github-actions\" in pr.checks.provider",
+      "timeoutSeconds": 60,
+      "args": [
+        { "name": "run", "positional": true, "description": "Run id (default: the newest failed run on the pull request's head)" },
+        { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    },
+    {
+      "name": "rerun",
+      "title": "Rerun All Jobs",
+      "description": "Rerun every job of the newest finished GitHub Actions run of the thread's pull request (or of --run).",
+      "when": "\"github-actions\" in pr.checks.provider",
+      "timeoutSeconds": 60,
+      "args": [
+        { "name": "run", "positional": true, "description": "Run id (default: the newest finished run on the pull request's head)" },
+        { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    },
+    {
+      "name": "cancel",
+      "title": "Cancel Run",
+      "description": "Cancel the GitHub Actions run in progress on the thread's pull request (or --run).",
+      "when": "\"github-actions\" in pr.checks.provider",
+      "confirm": "Cancel the GitHub Actions run in progress on this pull request?",
+      "timeoutSeconds": 60,
+      "args": [
+        { "name": "run", "positional": true, "description": "Run id (default: the newest run in progress on the pull request's head)" },
+        { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    },
+    {
+      "name": "open",
+      "title": "Open Run on GitHub",
+      "description": "Open the thread's pull request's GitHub Actions run in the browser: the one in progress, else the failed one, else the newest (or --run).",
+      "when": "thread.hasPr",
+      "args": [
+        { "name": "run", "positional": true, "description": "Run id (default: the run the panel would show first)" },
+        { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "runs",
+      "title": "Actions",
+      "icon": "workflow",
+      "scope": "pr",
+      "when": "\"github-actions\" in pr.checks.provider"
+    }
+  ]
+}

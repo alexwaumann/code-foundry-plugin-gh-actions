@@ -1,0 +1,273 @@
+{
+ "total_count": 4,
+ "jobs": [
+  {
+   "id": 117669843514,
+   "run_id": 39125565731,
+   "name": "attested",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-10-18T12:01:18Z",
+   "completed_at": "2026-10-18T12:01:20Z",
+   "html_url": "https://github.com/alexwaumann/code-foundry/actions/runs/39125565731/job/117669843514",
+   "run_attempt": 1,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-10-18T12:01:18Z",
+     "completed_at": "2026-10-18T12:01:19Z"
+    },
+    {
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 2,
+     "started_at": "2026-10-18T12:01:19Z",
+     "completed_at": "2026-10-18T12:01:19Z"
+    },
+    {
+     "name": "Run if [ \"$GITHUB_EVENT_NAME\" != pull_request ]; then",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-10-18T12:01:19Z",
+     "completed_at": "2026-10-18T12:01:19Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-10-18T12:01:19Z",
+     "completed_at": "2026-10-18T12:01:19Z"
+    }
+   ]
+  },
+  {
+   "id": 117669858813,
+   "run_id": 39125565731,
+   "name": "go-test",
+   "status": "completed",
+   "conclusion": "failure",
+   "started_at": "2026-10-18T12:01:28Z",
+   "completed_at": "2026-10-18T12:06:55Z",
+   "html_url": "https://github.com/alexwaumann/code-foundry/actions/runs/39125565731/job/117669858813",
+   "run_attempt": 1,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-10-18T12:01:29Z",
+     "completed_at": "2026-10-18T12:01:30Z"
+    },
+    {
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-10-18T12:01:30Z",
+     "completed_at": "2026-10-18T12:01:37Z"
+    },
+    {
+     "name": "Run ./.github/actions/setup-go-ghostty",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-10-18T12:01:37Z",
+     "completed_at": "2026-10-18T12:02:33Z"
+    },
+    {
+     "name": "Run make go-test",
+     "status": "completed",
+     "conclusion": "failure",
+     "number": 4,
+     "started_at": "2026-10-18T12:02:33Z",
+     "completed_at": "2026-10-18T12:06:46Z"
+    },
+    {
+     "name": "Post Run ./.github/actions/setup-go-ghostty",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-10-18T12:06:47Z",
+     "completed_at": "2026-10-18T12:06:47Z"
+    },
+    {
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-10-18T12:06:47Z",
+     "completed_at": "2026-10-18T12:06:48Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-10-18T12:06:48Z",
+     "completed_at": "2026-10-18T12:06:51Z"
+    }
+   ]
+  },
+  {
+   "id": 117669858838,
+   "run_id": 39125565731,
+   "name": "frontend",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-10-18T12:01:22Z",
+   "completed_at": "2026-10-18T12:04:31Z",
+   "html_url": "https://github.com/alexwaumann/code-foundry/actions/runs/39125565731/job/117669858838",
+   "run_attempt": 1,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-10-18T12:01:23Z",
+     "completed_at": "2026-10-18T12:01:24Z"
+    },
+    {
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-10-18T12:01:24Z",
+     "completed_at": "2026-10-18T12:01:29Z"
+    },
+    {
+     "name": "Run pnpm/action-setup@v6",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-10-18T12:01:29Z",
+     "completed_at": "2026-10-18T12:01:35Z"
+    },
+    {
+     "name": "Run actions/setup-node@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-10-18T12:01:35Z",
+     "completed_at": "2026-10-18T12:01:38Z"
+    },
+    {
+     "name": "Run make frontend-check",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-10-18T12:01:38Z",
+     "completed_at": "2026-10-18T12:04:28Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-10-18T12:04:28Z",
+     "completed_at": "2026-10-18T12:04:29Z"
+    },
+    {
+     "name": "Post Run pnpm/action-setup@v6",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-10-18T12:04:29Z",
+     "completed_at": "2026-10-18T12:04:29Z"
+    },
+    {
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10,
+     "started_at": "2026-10-18T12:04:29Z",
+     "completed_at": "2026-10-18T12:04:29Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 11,
+     "started_at": "2026-10-18T12:04:29Z",
+     "completed_at": "2026-10-18T12:04:29Z"
+    }
+   ]
+  },
+  {
+   "id": 117669858971,
+   "run_id": 39125565731,
+   "name": "go-lint",
+   "status": "completed",
+   "conclusion": "success",
+   "started_at": "2026-10-18T12:01:28Z",
+   "completed_at": "2026-10-18T12:04:38Z",
+   "html_url": "https://github.com/alexwaumann/code-foundry/actions/runs/39125565731/job/117669858971",
+   "run_attempt": 1,
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-10-18T12:01:28Z",
+     "completed_at": "2026-10-18T12:01:28Z"
+    },
+    {
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-10-18T12:01:28Z",
+     "completed_at": "2026-10-18T12:01:37Z"
+    },
+    {
+     "name": "Run ./.github/actions/setup-go-ghostty",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-10-18T12:01:37Z",
+     "completed_at": "2026-10-18T12:02:30Z"
+    },
+    {
+     "name": "Run make go-lint",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-10-18T12:02:30Z",
+     "completed_at": "2026-10-18T12:04:31Z"
+    },
+    {
+     "name": "Post Run ./.github/actions/setup-go-ghostty",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-10-18T12:04:31Z",
+     "completed_at": "2026-10-18T12:04:32Z"
+    },
+    {
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-10-18T12:04:32Z",
+     "completed_at": "2026-10-18T12:04:33Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-10-18T12:04:33Z",
+     "completed_at": "2026-10-18T12:04:34Z"
+    }
+   ]
+  }
+ ]
+}
