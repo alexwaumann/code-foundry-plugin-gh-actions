@@ -33,8 +33,9 @@ type app struct {
 	// Poll intervals of an open surface: while a run is in progress and someone looks,
 	// while nobody looks, and while the commit has no runs yet.
 	poll, hiddenPoll, waitPoll, rateLimitPoll time.Duration
-	// debounce batches the flag checks a burst of events asks for.
-	debounce time.Duration
+	// debounce batches the flag checks a burst of events asks for; sweep re-checks the
+	// threads with Actions checks in progress, sweepAll every thread.
+	debounce, sweep, sweepAll time.Duration
 
 	mu       sync.Mutex
 	surfaces map[string]*runsSurface
@@ -50,6 +51,8 @@ func newApp(r ghRunner) *app {
 		waitPoll:      30 * time.Second,
 		rateLimitPoll: 5 * time.Minute,
 		debounce:      2 * time.Second,
+		sweep:         time.Minute,
+		sweepAll:      5 * time.Minute,
 		surfaces:      map[string]*runsSurface{},
 	}
 }

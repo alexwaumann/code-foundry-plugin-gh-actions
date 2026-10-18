@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type watcher struct {
 	state   flagState
 	prints  map[string]string // thread → fingerprint of its checks, to wake surfaces
 	failing map[string]bool   // thread → the gh-actions.failing fact sent
+	pending map[string]bool   // threads whose pull request has Actions checks still running
 }
 
 // flagState is kept in the data dir so a restart does not flag the same failure again.
@@ -53,6 +55,7 @@ func newWatcher(a *app, h *pluginsdk.Host) *watcher {
 		state:   flagState{Flagged: map[string]string{}},
 		prints:  map[string]string{},
 		failing: map[string]bool{},
+		pending: map[string]bool{},
 	}
 }
 
@@ -121,6 +124,7 @@ func (w *watcher) onEvent(ev pluginsdk.Event) {
 	case e.ThreadList != nil && e.ThreadList.RemovedID != "":
 		delete(w.threads, e.ThreadList.RemovedID)
 		delete(w.dirty, e.ThreadList.RemovedID)
+		delete(w.pending, e.ThreadList.RemovedID)
 		return
 	case e.GH != nil:
 		if _, ok := e.GH["viewerUpdated"]; ok && len(e.GH) == 1 {
@@ -136,22 +140,41 @@ func (w *watcher) onEvent(ev pluginsdk.Event) {
 	}
 }
 
+// run checks the threads events marked, and sweeps on a timer: Code Foundry's gh
+// events do not come for every check that finishes (without a window showing the pull
+// request it polls GitHub rarely), so threads with Actions checks in progress are
+// checked every sweep and every thread every sweepAll.
 func (w *watcher) run() {
 	defer close(w.done)
+	sweep := time.NewTicker(w.a.sweep)
+	defer sweep.Stop()
+	lastAll := time.Now()
 	for {
+		var ids []string
 		select {
 		case <-w.ctx.Done():
 			return
+		case <-sweep.C:
+			w.mu.Lock()
+			if time.Since(lastAll) >= w.a.sweepAll-w.a.sweep/2 {
+				w.all = true
+			}
+			for id := range w.pending {
+				if w.threads[id] {
+					w.dirty[id] = true
+				}
+			}
+			w.mu.Unlock()
 		case <-w.kick:
-		}
-		select { // let a burst of events settle
-		case <-w.ctx.Done():
-			return
-		case <-time.After(w.a.debounce):
+			select { // let a burst of events settle
+			case <-w.ctx.Done():
+				return
+			case <-time.After(w.a.debounce):
+			}
 		}
 		w.mu.Lock()
-		var ids []string
 		if w.all {
+			lastAll = time.Now()
 			for id := range w.threads {
 				ids = append(ids, id)
 			}
@@ -182,6 +205,9 @@ func (w *watcher) check(thread string) {
 	if err != nil {
 		if pluginsdk.ErrorCode(err) == pluginsdk.CodeUnavailable { // no pull request (any more)
 			w.setFailing(thread, false)
+			w.mu.Lock()
+			delete(w.pending, thread)
+			w.mu.Unlock()
 			if _, ok := w.state.Flagged[thread]; ok {
 				w.clear(ctx, thread)
 			}
@@ -191,6 +217,13 @@ func (w *watcher) check(thread string) {
 		return
 	}
 	st := summarize(pc)
+	w.mu.Lock()
+	if st.Pending {
+		w.pending[thread] = true
+	} else {
+		delete(w.pending, thread)
+	}
+	w.mu.Unlock()
 	if fp := fingerprint(pc); w.prints[thread] != fp {
 		if w.prints[thread] != "" {
 			w.a.poke(pc.Repo, pc.Number)
@@ -207,7 +240,7 @@ func (w *watcher) check(thread string) {
 			Reason: clip(st.Job+" failed", 80), UntilSeen: true})
 		switch pluginsdk.ErrorCode(err) {
 		case 0:
-			w.h.Log().Info("flagged", "thread", thread, "job", st.Job, "run", st.RunID)
+			w.h.Log().Info("flagged", "thread", thread, "job", st.Job, "run", strconv.FormatInt(st.RunID, 10))
 			w.state.Flagged[thread] = st.Key
 			w.save()
 		case pluginsdk.CodeRateLimited:
@@ -231,6 +264,14 @@ func (w *watcher) clear(ctx context.Context, thread string) {
 	w.h.Log().Info("cleared", "thread", thread)
 	delete(w.state.Flagged, thread)
 	w.save()
+}
+
+// expect marks a thread whose run was just rerun or cancelled: its checks are about to
+// change, so the sweeps watch it until they settle.
+func (w *watcher) expect(thread string) {
+	w.mu.Lock()
+	w.pending[thread] = true
+	w.mu.Unlock()
 }
 
 func (w *watcher) retry(thread string) {

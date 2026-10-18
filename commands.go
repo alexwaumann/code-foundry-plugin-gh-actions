@@ -11,9 +11,10 @@ import (
 
 // target is the run a command acts on, of the thread's pull request.
 type target struct {
-	PR  prRef
-	SHA string
-	Run ghRun
+	Thread string
+	PR     prRef
+	SHA    string
+	Run    ghRun
 }
 
 // resolve finds the thread's pull request and the run a command acts on: the --run
@@ -31,6 +32,7 @@ func (a *app) resolve(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Comm
 	if err != nil {
 		return t, err
 	}
+	t.Thread = thread
 	t.PR = prRef{Repo: pc.Repo, Number: pc.Number, URL: pc.URL}
 	if s := req.Arg("run"); s != "" {
 		id, err := strconv.ParseInt(s, 10, 64)
@@ -94,7 +96,7 @@ func (a *app) rerunFailed(ctx context.Context, h *pluginsdk.Host, req pluginsdk.
 	if err := a.gh.rerun(ctx, t.PR.Repo, t.Run.ID, true); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
-	a.poke(t.PR.Repo, t.PR.Number)
+	a.changed(t)
 	return result("Rerunning the failed jobs of "+runLabel(t.Run), t)
 }
 
@@ -107,7 +109,7 @@ func (a *app) rerunAll(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Com
 	if err := a.gh.rerun(ctx, t.PR.Repo, t.Run.ID, false); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
-	a.poke(t.PR.Repo, t.PR.Number)
+	a.changed(t)
 	return result("Rerunning every job of "+runLabel(t.Run), t)
 }
 
@@ -120,7 +122,7 @@ func (a *app) cancel(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Comma
 	if err := a.gh.cancel(ctx, t.PR.Repo, t.Run.ID); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("cancelling %s: %w", runLabel(t.Run), err)
 	}
-	a.poke(t.PR.Repo, t.PR.Number)
+	a.changed(t)
 	return result("Cancelling "+runLabel(t.Run), t)
 }
 
@@ -145,4 +147,13 @@ func (a *app) open(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Command
 	}
 	t.Run.HTMLURL = url
 	return result("Opened "+url, t)
+}
+
+// changed wakes what shows the pull request's runs after a rerun or a cancel: its open
+// surfaces now, the flag watcher on its next sweeps.
+func (a *app) changed(t target) {
+	a.poke(t.PR.Repo, t.PR.Number)
+	if a.watch != nil {
+		a.watch.expect(t.Thread)
+	}
 }

@@ -214,7 +214,9 @@ type actionsState struct {
 	RunID  int64
 	// Passed: every Actions check finished and none failed.
 	Passed bool
-	Any    bool
+	// Pending: an Actions check is queued or running.
+	Pending bool
+	Any     bool
 }
 
 func summarize(pc prChecks) actionsState {
@@ -243,5 +245,6 @@ func summarize(pc prChecks) actionsState {
 		st.Key = strings.Join(failedJobs, ",")
 	}
 	st.Passed = st.Any && !st.Failed && !pending
+	st.Pending = pending
 	return st
 }

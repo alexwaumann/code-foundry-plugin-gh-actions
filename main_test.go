@@ -158,11 +158,15 @@ type harness struct {
 	checks []byte // nil: the thread has no pull request
 }
 
-func start(t *testing.T, opts plugintest.Options) *harness {
+func start(t *testing.T, opts plugintest.Options, tweaks ...func(*app)) *harness {
 	t.Helper()
 	hs := &harness{gh: newFakeGH(), checks: checksJSON(map[string]string{"go-test": "failure"})}
 	hs.app = newApp(hs.gh)
 	hs.app.poll, hs.app.hiddenPoll, hs.app.waitPoll, hs.app.debounce = 20*time.Millisecond, 50*time.Millisecond, 20*time.Millisecond, 5*time.Millisecond
+	hs.app.sweep, hs.app.sweepAll = time.Hour, time.Hour
+	for _, tw := range tweaks {
+		tw(hs.app)
+	}
 	opts.Name = "gh-actions"
 	if opts.Granted.Commands == nil {
 		opts.Granted = pluginsdk.Permissions{Commands: []string{"thread.send", "view.open.url", "pr.checks"},
@@ -790,4 +794,15 @@ func TestFailureExcerptLimit(t *testing.T) {
 	if !strings.Contains(text, "line 499") || strings.Contains(text, "line 439 ") || strings.Count(text, "\n") > 75 {
 		t.Errorf("excerpt is not the tail:\n%s", text)
 	}
+}
+
+// Without gh events, a thread whose Actions checks are running is checked again on the
+// sweep, so a failure that finishes quietly is still flagged.
+func TestFlagSweep(t *testing.T) {
+	hs := start(t, plugintest.Options{}, func(a *app) { a.sweep = 20 * time.Millisecond })
+	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
+	_ = hs.Event(threadsSnapshot("s-1"))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(h.Invocations()) > 0 })
+	hs.setChecks(checksJSON(map[string]string{"go-test": "failure"}))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
 }

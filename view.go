@@ -121,10 +121,14 @@ func (s *runsSurface) header() *ui.Header {
 		spans = append(spans, ui.T(" · "))
 		if completed(run.Status) {
 			spans = append(spans, ui.T("took "), ui.For(runDuration(run)), ui.T(" · "), ui.At(run.UpdatedAt, ui.TimeRelative))
-		} else if !run.StartedAt.IsZero() {
+		} else if run.Status == "in_progress" && !run.StartedAt.IsZero() {
 			spans = append(spans, ui.T("running "), ui.At(run.StartedAt, ui.TimeElapsed))
 		} else {
-			spans = append(spans, ui.T("queued "), ui.At(run.CreatedAt, ui.TimeRelative))
+			since := run.StartedAt
+			if since.IsZero() {
+				since = run.CreatedAt
+			}
+			spans = append(spans, ui.T("queued "), ui.At(since, ui.TimeRelative))
 		}
 		h.Subline = ui.Spans(spans...)
 		url = run.HTMLURL
