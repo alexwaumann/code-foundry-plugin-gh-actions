@@ -125,8 +125,8 @@ func (s *runsSurface) loop() {
 }
 
 // nextPoll says when to fetch again: every poll while a run is in progress and someone
-// looks, less often while hidden, never once every run finished (a rerun or a push
-// wakes the surface through the flag watcher).
+// looks, less often while hidden, never once every run finished (a rerun, a push or
+// Code Foundry's pullRequestChanged event for new checks wakes the surface).
 func (s *runsSurface) nextPoll() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()

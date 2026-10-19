@@ -238,10 +238,8 @@ func (a *app) failure(ctx context.Context, t target, jobID int64) (ghRun, ghJob,
 }
 
 // changed wakes what shows the pull request's runs after a rerun or a cancel: its open
-// surfaces now, the flag watcher on its next sweeps.
+// surfaces and run-finished poller now. The flag watcher follows from the
+// pullRequestChanged events of the check rollup going pending, then done.
 func (a *app) changed(t target) {
 	a.poke(t.PR.Repo, t.PR.Number)
-	if a.watch != nil {
-		a.watch.expect(t.Thread)
-	}
 }

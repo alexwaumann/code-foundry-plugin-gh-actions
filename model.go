@@ -15,11 +15,13 @@ import (
 
 // prChecks is the JSON of the host command pr.checks.
 type prChecks struct {
-	Repo    string  `json:"repo"`
-	Number  int     `json:"number"`
-	URL     string  `json:"url"`
-	HeadSHA string  `json:"headSha"`
-	Checks  []check `json:"checks"`
+	Repo    string `json:"repo"`
+	Number  int    `json:"number"`
+	URL     string `json:"url"`
+	HeadSHA string `json:"headSha"`
+	// LastError is set when the host's refresh failed and the checks are its older copy.
+	LastError string  `json:"lastError"`
+	Checks    []check `json:"checks"`
 }
 
 type check struct {

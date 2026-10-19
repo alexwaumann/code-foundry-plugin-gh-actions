@@ -18,7 +18,8 @@ import (
 // defaults to the thread's pull request) and is woken when a workflow run on the pull
 // request's head completes. The plugin polls each subscribed pull request's runs while
 // it has a subscription (often while a run is going, rarely once all finished; an open
-// panel's fetches and the flag watcher's check changes count too), and fires once per
+// panel's fetches and Code Foundry's pullRequestChanged events for a push or new checks
+// count too), and fires once per
 // run attempt that completes after the subscription was armed, with {pr, run} as the
 // match. The host sends every live subscription again after each start, which re-arms.
 

@@ -33,9 +33,9 @@ type app struct {
 	// Poll intervals of an open surface: while a run is in progress and someone looks,
 	// while nobody looks, and while the commit has no runs yet.
 	poll, hiddenPoll, waitPoll, rateLimitPoll time.Duration
-	// debounce batches the flag checks a burst of events asks for; sweep re-checks the
-	// threads with Actions checks in progress, sweepAll every thread.
-	debounce, sweep, sweepAll time.Duration
+	// debounce batches the flag checks a burst of events asks for; a check whose read
+	// failed is retried after retryMin, doubling up to retryMax.
+	debounce, retryMin, retryMax time.Duration
 	// wakePoll is how often a pull request with a run-finished subscription is polled
 	// while a run is going (or none started), wakeIdlePoll once every run finished.
 	wakePoll, wakeIdlePoll time.Duration
@@ -55,8 +55,8 @@ func newApp(r ghRunner) *app {
 		waitPoll:      30 * time.Second,
 		rateLimitPoll: 5 * time.Minute,
 		debounce:      2 * time.Second,
-		sweep:         time.Minute,
-		sweepAll:      5 * time.Minute,
+		retryMin:      30 * time.Second,
+		retryMax:      10 * time.Minute,
 		wakePoll:      20 * time.Second,
 		wakeIdlePoll:  2 * time.Minute,
 		surfaces:      map[string]*runsSurface{},
