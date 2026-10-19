@@ -215,6 +215,9 @@ func (s *runsSurface) fetch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A run-finished subscription to this pull request learns of a finished run as soon
+	// as the panel sees it.
+	s.a.wakes.observe(ctx, prKey(pr.Repo, pr.Number), pull.Head.SHA, runs)
 	s.mu.Lock()
 	if s.pull.Head.SHA != pull.Head.SHA { // a new head: start over
 		s.selRun, s.selJob, s.jobs, s.jobsFor = 0, 0, nil, 0
@@ -360,6 +363,7 @@ func (s *runsSurface) sendFailure(ctx context.Context, thread string) error {
 	s.mu.Lock()
 	run, _ := findRun(s.runs, s.selRun)
 	job, lines, ok := s.failureLocked()
+	pr := s.pr
 	s.mu.Unlock()
 	if !ok {
 		return errors.New("no failed step with a log in this run yet")
@@ -367,16 +371,17 @@ func (s *runsSurface) sendFailure(ctx context.Context, thread string) error {
 	if thread == "" {
 		return errors.New("no thread to send to")
 	}
-	if err := sendExcerpt(ctx, s.h, thread, run, job, lines); err != nil {
+	if err := sendExcerpt(ctx, s.h, thread, pr, run, job, lines); err != nil {
 		return err
 	}
 	_ = s.h.ToastIn(s.open.Instance, pluginsdk.ToastInfo, "Sent "+job.Name+"'s failure to Claude")
 	return nil
 }
 
-// sendExcerpt sends a failed job's excerpt into a thread.
-func sendExcerpt(ctx context.Context, h *pluginsdk.Host, thread string, run ghRun, job ghJob, lines []logLine) error {
-	text := failureExcerpt(run, job, lines)
+// sendExcerpt sends a failed job's excerpt into a thread, ending with the line that
+// waits for the pull request's next finished run.
+func sendExcerpt(ctx context.Context, h *pluginsdk.Host, thread string, pr prRef, run ghRun, job ghJob, lines []logLine) error {
+	text := failureExcerpt(run, job, lines, runHint(h, prKey(pr.Repo, pr.Number), 0))
 	if _, err := h.Invoke(ctx, "thread.send", map[string]string{"text": text}, pluginsdk.UiContext{ThreadID: thread}); err != nil {
 		return fmt.Errorf("sending the failure: %w", err)
 	}
@@ -429,11 +434,12 @@ func (s *runsSurface) failedJobs() []ghJob {
 }
 
 // failureExcerpt is the message "Send failure to Claude" sends: at most 4 KB with the
-// workflow, job, step, the run's URL and up to 60 lines of the failed step's log. A
-// failed step's last lines are often a summary (Go's "ok" lines after the one FAIL), so
-// the excerpt keeps the lines that look like errors (with the two after each) and the
-// last 20 lines, in order, "…" marking what was left out.
-func failureExcerpt(run ghRun, job ghJob, lines []logLine) string {
+// workflow, job, step, the run's URL and up to 60 lines of the failed step's log, then
+// hint, the line that waits for the next run. A failed step's last lines are often a
+// summary (Go's "ok" lines after the one FAIL), so the excerpt keeps the lines that look
+// like errors (with the two after each) and the last 20 lines, in order, "…" marking
+// what was left out.
+func failureExcerpt(run ghRun, job ghJob, lines []logLine, hint string) string {
 	const limit = 4096
 	step := failedStep(job)
 	if step == "" && len(lines) > 0 {
@@ -446,13 +452,13 @@ func failureExcerpt(run ghRun, job ghJob, lines []logLine) string {
 	head := fmt.Sprintf("The GitHub Actions run for this pull request failed. Please investigate: read the log below, find the cause, and tell me what went wrong (fix it if the cause is in this branch).\n\n"+
 		"Workflow: %s (run #%d, attempt %d)\nJob: %s\nStep: %s\nRun: %s\n\nThe failed step's log (error lines and its last lines):\n```\n",
 		run.Name, run.RunNumber, max(run.RunAttempt, 1), job.Name, step, url)
-	const foot = "```\n"
+	foot := "```\n\nAfter pushing a fix or rerunning the job, wait for the run to finish instead of polling:\n" + hint
 	body := excerptLines(lines, 60, 20)
 	for len(body) > 0 && len(head)+len(strings.Join(body, "\n"))+1+len(foot) > limit {
 		body = body[1:]
 	}
 	if len(body) == 0 {
-		return truncate(head+foot, limit)
+		return truncate(head, limit-len(foot)) + foot
 	}
 	return head + strings.Join(body, "\n") + "\n" + foot
 }

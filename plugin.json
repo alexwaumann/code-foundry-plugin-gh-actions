@@ -1,8 +1,8 @@
 {
   "name": "gh-actions",
   "displayName": "GitHub Actions",
-  "version": "0.1.2",
-  "description": "GitHub Actions runs, jobs and failed-step logs for the selected thread's pull request: rerun, cancel, send a failure to Claude, and a thread flag when a run fails.",
+  "version": "0.2.0",
+  "description": "GitHub Actions runs, jobs and failed-step logs for the selected thread's pull request: rerun, cancel, send a failure to Claude, a thread flag when a run fails, and a wake source agents wait on for a run to finish.",
   "protocol": 1,
   "exec": ["bin/gh-actions"],
   "permissions": {
@@ -66,6 +66,18 @@
       "args": [
         { "name": "run", "positional": true, "description": "Run id (default: the run the panel would show first)" },
         { "name": "thread", "context": "thread", "description": "The thread whose pull request (default: the active one)" }
+      ]
+    }
+  ],
+  "wakes": [
+    {
+      "name": "run-finished",
+      "title": "Workflow run finished",
+      "description": "A GitHub Actions run on the pull request's head commit completed (each run attempt once). The payload has the run id, name, number, attempt, status, conclusion, URL, failed jobs and how many runs are still going.",
+      "scope": "pr",
+      "args": [
+        { "name": "pr", "context": "pr", "required": true, "description": "The pull request, owner/name#123" },
+        { "name": "run", "type": "int", "description": "Only this run id (default: every run on the head)" }
       ]
     }
   ],

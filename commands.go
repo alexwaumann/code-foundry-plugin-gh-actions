@@ -77,6 +77,11 @@ func runLabel(r ghRun) string {
 	return fmt.Sprintf("%s #%d", r.Name, r.RunNumber)
 }
 
+// waitLine ends a message about a run with the line that waits for it to finish.
+func waitLine(h *pluginsdk.Host, t target) string {
+	return "\nWait for it to finish: " + runHint(h, prKey(t.PR.Repo, t.PR.Number), t.Run.ID)
+}
+
 func result(msg string, t target) (pluginsdk.CommandResult, error) {
 	js, err := json.Marshal(map[string]any{"repo": t.PR.Repo, "number": t.PR.Number, "run": t.Run.ID, "url": t.Run.HTMLURL})
 	if err != nil {
@@ -97,7 +102,7 @@ func (a *app) rerunFailed(ctx context.Context, h *pluginsdk.Host, req pluginsdk.
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
 	a.changed(t)
-	return result("Rerunning the failed jobs of "+runLabel(t.Run), t)
+	return result("Rerunning the failed jobs of "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
 // rerunAll reruns every job of the newest finished run.
@@ -110,7 +115,7 @@ func (a *app) rerunAll(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Com
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
 	a.changed(t)
-	return result("Rerunning every job of "+runLabel(t.Run), t)
+	return result("Rerunning every job of "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
 // cancel cancels the newest run in progress (the manifest makes the host confirm).
@@ -123,7 +128,7 @@ func (a *app) cancel(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Comma
 		return pluginsdk.CommandResult{}, fmt.Errorf("cancelling %s: %w", runLabel(t.Run), err)
 	}
 	a.changed(t)
-	return result("Cancelling "+runLabel(t.Run), t)
+	return result("Cancelling "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
 // open opens a run on GitHub: the one in progress, else the failed one, else the
@@ -172,7 +177,7 @@ func (a *app) sendFailure(ctx context.Context, h *pluginsdk.Host, req pluginsdk.
 	if err != nil {
 		return pluginsdk.CommandResult{}, err
 	}
-	if err := sendExcerpt(ctx, h, t.Thread, run, job, lines); err != nil {
+	if err := sendExcerpt(ctx, h, t.Thread, t.PR, run, job, lines); err != nil {
 		return pluginsdk.CommandResult{}, err
 	}
 	t.Run = run

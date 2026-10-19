@@ -1,8 +1,8 @@
 // Command gh-actions is a Code Foundry plugin that tracks the GitHub Actions runs of a
 // thread's pull request: a side-panel surface with the head commit's runs, the selected
-// run's jobs and its failed step's log; commands to rerun, cancel and open a run; and an
-// attention flag on the thread when a run fails. It talks to GitHub through the user's
-// own `gh` login.
+// run's jobs and its failed step's log; commands to rerun, cancel and open a run; an
+// attention flag on the thread when a run fails; and the run-finished wake source agents
+// wait on instead of polling. It talks to GitHub through the user's own `gh` login.
 package main
 
 import (
@@ -36,14 +36,18 @@ type app struct {
 	// debounce batches the flag checks a burst of events asks for; sweep re-checks the
 	// threads with Actions checks in progress, sweepAll every thread.
 	debounce, sweep, sweepAll time.Duration
+	// wakePoll is how often a pull request with a run-finished subscription is polled
+	// while a run is going (or none started), wakeIdlePoll once every run finished.
+	wakePoll, wakeIdlePoll time.Duration
 
 	mu       sync.Mutex
 	surfaces map[string]*runsSurface
 	watch    *watcher
+	wakes    *runWakes
 }
 
 func newApp(r ghRunner) *app {
-	return &app{
+	a := &app{
 		gh:            gh{r: r},
 		now:           time.Now,
 		poll:          15 * time.Second,
@@ -53,8 +57,12 @@ func newApp(r ghRunner) *app {
 		debounce:      2 * time.Second,
 		sweep:         time.Minute,
 		sweepAll:      5 * time.Minute,
+		wakePoll:      20 * time.Second,
+		wakeIdlePoll:  2 * time.Minute,
 		surfaces:      map[string]*runsSurface{},
 	}
+	a.wakes = newRunWakes(a)
+	return a
 }
 
 func (a *app) plugin() pluginsdk.Plugin {
@@ -70,9 +78,16 @@ func (a *app) plugin() pluginsdk.Plugin {
 			}
 		},
 		Shutdown: func(context.Context, *pluginsdk.Host) {
+			a.wakes.stop()
 			if a.watch != nil {
 				a.watch.stop()
 			}
+		},
+		OnWakeSubscribed: func(_ context.Context, h *pluginsdk.Host, s pluginsdk.WakeSubscription) {
+			a.wakes.subscribed(h, s)
+		},
+		OnWakeUnsubscribed: func(_ context.Context, _ *pluginsdk.Host, u pluginsdk.WakeUnsubscribed) {
+			a.wakes.unsubscribed(u)
 		},
 		Commands: map[string]pluginsdk.CommandFunc{
 			"rerun-failed": a.rerunFailed,
@@ -85,8 +100,8 @@ func (a *app) plugin() pluginsdk.Plugin {
 	}
 }
 
-// poke makes the open surfaces of a pull request fetch again (after a rerun or a
-// cancel, or when its head moved).
+// poke makes the open surfaces of a pull request, and its run-finished poller, fetch
+// again (after a rerun or a cancel, or when its checks changed).
 func (a *app) poke(repo string, number int) {
 	a.mu.Lock()
 	var hit []*runsSurface
@@ -99,4 +114,5 @@ func (a *app) poke(repo string, number int) {
 	for _, s := range hit {
 		s.wakeUp()
 	}
+	a.wakes.poke(prKey(repo, number))
 }

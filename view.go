@@ -76,6 +76,9 @@ func (s *runsSurface) view() (ui.View, []pluginsdk.AppendLine) {
 	default:
 		body = append(body, s.runsList())
 	}
+	if n, ok := s.waitNotice(); ok && s.tab != tabLog {
+		body = append(body, n)
+	}
 	if s.tab != tabLog {
 		s.bufKey = ""
 	}
@@ -179,6 +182,30 @@ func (s *runsSurface) actionBar() (ui.Node, bool) {
 		b = append(b, ui.CommandButton("btn-cancel", "Cancel", "plugin.gh-actions.cancel", args).WithStyle(ui.ButtonDestructive).WithIcon("square"))
 	}
 	return ui.NewActions("bar", b...), true
+}
+
+// waitNotice tells an agent how to wait for the selected run instead of polling: for one
+// in progress its end, for a failed one the next run's. Caller holds mu.
+func (s *runsSurface) waitNotice() (ui.Node, bool) {
+	run, ok := findRun(s.runs, s.selRun)
+	if !ok || !s.havePR {
+		return ui.Node{}, false
+	}
+	key := prKey(s.pr.Repo, s.pr.Number)
+	n := &ui.Notice{Icon: "bell"}
+	switch {
+	case !completed(run.Status):
+		n.Title = clip(runLabel(run), 100) + " is running"
+		n.Body = ui.Plain("An agent waits for it to finish with:")
+		n.Detail = runHint(s.h, key, run.ID)
+	case isFailure(run.Conclusion):
+		n.Title = runTitle(run)
+		n.Body = ui.Plain("An agent waits for the next run to finish with:")
+		n.Detail = runHint(s.h, key, 0)
+	default:
+		return ui.Node{}, false
+	}
+	return ui.Node{Key: "wait", Notice: n}, true
 }
 
 func (s *runsSurface) runsList() ui.Node {

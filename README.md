@@ -3,11 +3,12 @@
 A [Code Foundry](https://github.com/alexwaumann/code-foundry) plugin that tracks the
 GitHub Actions runs of a thread's pull request: what ran on its head commit, which job
 failed at which step, the failed step's log, and the buttons to rerun, cancel, or hand
-the failure to Claude. It flags the thread when a run fails.
+the failure to Claude. It flags the thread when a run fails, and agents wait for a run to
+finish with its `run-finished` wake source instead of polling.
 
 ```
 code-foundry plugin install gh-actions --enable
-code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.1.2 --enable   # a release directly
+code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.2.0 --enable   # a release directly
 ```
 
 ## What it shows
@@ -44,6 +45,30 @@ last data stays, dimmed).
 attention flag, "GitHub Actions: <job> failed", until you open it. The same failure is
 not flagged again (also across restarts); a later failure is. A later run that passes
 clears it. The fact `gh-actions.failing` is set on such a thread for `when` clauses.
+
+**Wake source** `run-finished` (needs Code Foundry with wake sources, pluginsdk v0.2.0):
+an agent's thread runs
+
+```
+code-foundry thread subscribe --plugin gh-actions/run-finished [--arg run=<run id>] [--repeat]
+```
+
+and is woken when a GitHub Actions run on its pull request's head commit completes (`pr`
+defaults to the thread's pull request, `owner/name#123`; `run` waits for one run only).
+Each run attempt fires once, with a title like `ci #507 passed` or `ci #494 failed
+(attempt 2)` and the payload `{pr, run, name, number, attempt, event, status, conclusion,
+url, head_sha, failed_jobs: [{id, name, step, url}], still_running}`. Runs that had
+already finished when the subscription came are not news. While a pull request has a
+subscription the plugin polls its runs every 20 s while one is going (or none started
+yet) and every 2 minutes once all finished; an open panel's fetches and new checks seen
+by the flag watcher count too. It stops polling with the pull request's last
+subscription (a one-shot goes after its first wake); the panel keeps its own polling
+while someone looks.
+
+Every message about a run ends with the line that subscribes to it: the text *Send
+failure to Claude* sends, the `rerun-failed`, `rerun` and `cancel` results (with `--arg
+run=<id>`), and the panel's notice under a failed or running run. The flag reason does
+not: the app caps it at 80 characters, too short for the line.
 
 **Commands** (palette under *GitHub Actions*, CLI `code-foundry plugin gh-actions …`),
 each for the active thread or `--thread <id>`, optionally `--run <id>` (or the run id as
@@ -84,10 +109,19 @@ code-foundry plugin act gh-actions runs tab --key tab-jobs --thread <thread>
 code-foundry plugin act gh-actions runs --key run-<run id> --thread <thread>
 code-foundry plugin gh-actions send-failure [<run id>] --thread <thread>   # what the button runs
 code-foundry plugin gh-actions open --thread <thread>
-code-foundry plugin logs gh-actions --lines 50
+code-foundry plugin wakes gh-actions                     # the run-finished line
+code-foundry thread subscribe --id <thread> --plugin gh-actions/run-finished
+code-foundry plugin logs gh-actions --lines 50          # "run-finished armed", "… fired"
 make build && code-foundry plugin restart gh-actions   # after every change
 make test
 ```
+
+0.2.0 was tested on 2026-10-18 against a dev Code Foundry (363eda43) in an isolated
+`CODE_FOUNDRY_HOME`: `plugin wakes gh-actions` listed `run-finished`; a thread subscribed
+with `--arg pr=alexwaumann/code-foundry#216` and `plugin logs gh-actions` showed `run-finished
+armed`, a poll (`head=fac70ae runs=1 running=0 next=2m0s`: every run had finished) and,
+after `thread unsubscribe`, `run-finished stopped`. Fires are covered by the unit tests
+(no reruns on that repository).
 
 0.1.1 was tested end to end on 2026-10-18 against a dev Code Foundry (73685d8b) in an
 isolated `CODE_FOUNDRY_HOME`: two threads on code-foundry's PR #196 (`cf/plugins-7-registry`)
@@ -112,6 +146,20 @@ attaches them with `SHA256SUMS`. Then `make registry-entry` writes `dist/gh-acti
 for the registry pull request.
 
 ## Changelog
+
+### 0.2.0
+
+- Wake source `run-finished` (args `pr`, from the thread's pull request, and optional
+  `run`; scope pr): fires when a workflow run on the pull request's head completes, once
+  per run attempt, with the run, its conclusion and failed jobs in the payload. A
+  subscription re-arms after a restart (the host sends it again); the pull request is
+  polled only while it has one.
+- *Send failure to Claude*'s message, the `rerun-failed`, `rerun` and `cancel` results
+  and a new notice in the panel under a failed or running run end with the `code-foundry
+  thread subscribe --plugin gh-actions/run-finished …` line (not the 80-character flag
+  reason).
+- Built against pluginsdk v0.2.0 (code-foundry `363eda43`). Same permissions as 0.1.2
+  (a wake source needs none), so updating keeps it enabled.
 
 ### 0.1.2
 

@@ -973,9 +973,13 @@ func TestFailureExcerptLimit(t *testing.T) {
 		lines = append(lines, logLine{Job: "test", Step: "Run tests", Text: fmt.Sprintf("line %d %s", i, strings.Repeat("x", 200))})
 	}
 	text := failureExcerpt(ghRun{Name: "ci", RunNumber: 3, HTMLURL: "https://github.com/o/r/actions/runs/1"},
-		ghJob{Name: "test", HTMLURL: "https://github.com/o/r/actions/runs/1/job/2", Steps: []ghStep{{Name: "Run tests", Conclusion: "failure"}}}, lines)
+		ghJob{Name: "test", HTMLURL: "https://github.com/o/r/actions/runs/1/job/2", Steps: []ghStep{{Name: "Run tests", Conclusion: "failure"}}}, lines,
+		"code-foundry thread subscribe --plugin gh-actions/run-finished --arg pr=o/r#1")
 	if len(text) > 4096 {
 		t.Errorf("%d bytes", len(text))
+	}
+	if !strings.HasSuffix(text, "\ncode-foundry thread subscribe --plugin gh-actions/run-finished --arg pr=o/r#1") {
+		t.Errorf("the excerpt does not end with the wake hint:\n%s", text[len(text)-300:])
 	}
 	if !strings.Contains(text, "line 499") || strings.Contains(text, "line 439 ") || strings.Count(text, "\n") > 75 {
 		t.Errorf("excerpt is not the tail:\n%s", text)
