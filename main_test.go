@@ -153,10 +153,11 @@ func checksJSON(conclusions map[string]string) []byte {
 // harness starts the plugin with a fake gh and a pr.checks that answers checks().
 type harness struct {
 	*plugintest.Host
-	gh     *fakeGH
-	app    *app
-	mu     sync.Mutex
-	checks []byte // nil: the thread has no pull request
+	gh        *fakeGH
+	app       *app
+	mu        sync.Mutex
+	checks    []byte // nil: the thread has no pull request
+	checksErr error  // set: pr.checks fails with it
 }
 
 func start(t *testing.T, opts plugintest.Options, tweaks ...func(*app)) *harness {
@@ -164,7 +165,7 @@ func start(t *testing.T, opts plugintest.Options, tweaks ...func(*app)) *harness
 	hs := &harness{gh: newFakeGH(), checks: checksJSON(map[string]string{"go-test": "failure"})}
 	hs.app = newApp(hs.gh)
 	hs.app.poll, hs.app.hiddenPoll, hs.app.waitPoll, hs.app.debounce = 20*time.Millisecond, 50*time.Millisecond, 20*time.Millisecond, 5*time.Millisecond
-	hs.app.sweep, hs.app.sweepAll = time.Hour, time.Hour
+	hs.app.retryMin, hs.app.retryMax = time.Hour, time.Hour
 	for _, tw := range tweaks {
 		tw(hs.app)
 	}
@@ -178,6 +179,9 @@ func start(t *testing.T, opts plugintest.Options, tweaks ...func(*app)) *harness
 		case "pr.checks":
 			hs.mu.Lock()
 			defer hs.mu.Unlock()
+			if hs.checksErr != nil {
+				return pluginsdk.CommandResult{}, hs.checksErr
+			}
 			if hs.checks == nil {
 				return pluginsdk.CommandResult{}, pluginsdk.NewError(pluginsdk.CodeUnavailable, "not available in this context: thread %s has no pull request", p.Args["thread"])
 			}
@@ -788,14 +792,61 @@ func TestCommands(t *testing.T) {
 	}
 }
 
+const branch = "cf/plugins-4-skill" // #197's head
+
 func threadsSnapshot(ids ...string) pluginsdk.Event {
 	var ts []map[string]string
 	for _, id := range ids {
-		ts = append(ts, map[string]string{"id": id, "status": "THREAD_STATUS_IDLE"})
+		ts = append(ts, map[string]string{"id": id, "status": "THREAD_STATUS_IDLE", "branch": branch})
 	}
 	return pluginsdk.Event{Subscription: "sub-1", Snapshot: true,
 		Event: mustJSON(map[string]any{"threadList": map[string]any{"snapshot": map[string]any{"threads": ts}}, "epoch": "e1"})}
 }
+
+// threadUpdated is a threadList.updated for a thread on branch b, linking the pull
+// requests given (owner/name#n).
+func threadUpdated(id, b string, linked ...int) pluginsdk.Event {
+	var prs []map[string]any
+	for _, n := range linked {
+		prs = append(prs, map[string]any{"slug": repo, "number": n, "url": fmt.Sprintf("https://github.com/%s/pull/%d", repo, n)})
+	}
+	return pluginsdk.Event{Subscription: "sub-1", Event: mustJSON(map[string]any{"threadList": map[string]any{"updated": map[string]any{
+		"id": id, "branch": b, "status": "THREAD_STATUS_BUSY", "lastActivityAt": time.Now().Format(time.RFC3339Nano), "linkedPullRequests": prs}},
+		"seq": "5", "epoch": "e1"})}
+}
+
+// prEvent is a gh.pullRequestChanged for pull request n of repo on head ref, its state
+// after the change state (OPEN, MERGED, CLOSED), with changes of the kinds given
+// (CHECKS, HEAD_PUSHED, …).
+func prEvent(n int, ref, state string, kinds ...string) pluginsdk.Event {
+	var changes []map[string]any
+	for _, k := range kinds {
+		changes = append(changes, map[string]any{"kind": "PULL_REQUEST_CHANGE_KIND_" + k})
+	}
+	url := fmt.Sprintf("https://github.com/%s/pull/%d", repo, n)
+	return pluginsdk.Event{Subscription: "sub-1", Event: mustJSON(map[string]any{"gh": map[string]any{"pullRequestChanged": map[string]any{
+		"repoSlug": repo, "number": n, "url": url, "headRef": ref,
+		"pullRequest": map[string]any{"repoSlug": repo, "number": n, "headRef": ref, "url": url, "state": "PULL_REQUEST_STATE_" + state},
+		"changes":     changes}}, "seq": "12", "epoch": "e1"})}
+}
+
+// ghSnapshot is one event of the gh snapshot the host resends after the plugin fell
+// behind (the snapshot is notifications flagged Snapshot, not a gh.snapshot).
+var ghSnapshot = pluginsdk.Event{Subscription: "sub-1", Snapshot: true, Event: json.RawMessage(`{"gh":{"polled":{"fetchedAt":"2026-10-18T12:26:35Z"}},"epoch":"e1"}`)}
+
+// checksReads counts the pr.checks calls the plugin made, per thread.
+func checksReads(h *plugintest.Host, thread string) int {
+	n := 0
+	for _, inv := range h.Invocations() {
+		if inv.Command == "pr.checks" && inv.Args["thread"] == thread {
+			n++
+		}
+	}
+	return n
+}
+
+// settle waits for the debounce and the checks it starts.
+func settle() { time.Sleep(100 * time.Millisecond) }
 
 var ghPolled = pluginsdk.Event{Subscription: "sub-1", Event: json.RawMessage(`{"gh":{"polled":{"fetchedAt":"2026-10-18T12:26:35Z"}},"seq":"9","epoch":"e1"}`)}
 
@@ -834,8 +885,9 @@ func TestFlagLifecycle(t *testing.T) {
 		return false
 	})
 
-	// The same failure again (another poll): no second flag.
-	if err := hs.Event(ghPolled); err != nil {
+	// The same failure again (another poll's checks event): no second flag.
+	checksMoved := prEvent(197, branch, "OPEN", "CHECKS")
+	if err := hs.Event(checksMoved); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -845,7 +897,7 @@ func TestFlagLifecycle(t *testing.T) {
 
 	// A rerun that passes clears it.
 	hs.setChecks(checksJSON(nil))
-	if err := hs.Event(ghPolled); err != nil {
+	if err := hs.Event(checksMoved); err != nil {
 		t.Fatal(err)
 	}
 	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
@@ -855,10 +907,10 @@ func TestFlagLifecycle(t *testing.T) {
 
 	// A run in progress leaves things alone; a new failure flags again.
 	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
-	_ = hs.Event(ghPolled)
+	_ = hs.Event(checksMoved)
 	time.Sleep(50 * time.Millisecond)
 	hs.setChecks(checksJSON(map[string]string{"go-lint": "failure"}))
-	_ = hs.Event(ghPolled)
+	_ = hs.Event(checksMoved)
 	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
 		fs := flagsFor(h, "s-1")
 		return len(fs) == 3 && fs[2].Reason == "go-lint failed"
@@ -986,13 +1038,328 @@ func TestFailureExcerptLimit(t *testing.T) {
 	}
 }
 
-// Without gh events, a thread whose Actions checks are running is checked again on the
-// sweep, so a failure that finishes quietly is still flagged.
-func TestFlagSweep(t *testing.T) {
-	hs := start(t, plugintest.Options{}, func(a *app) { a.sweep = 20 * time.Millisecond })
+func TestDecodePullRequestChanged(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		event         []byte
+		key, ref      string
+		relevant      bool
+		closed, moved bool // moved: a push or new checks (pokes the panel)
+	}{
+		{"captured checks", fixture(t, "pull_request_changed.json"), "alexwaumann/code-foundry-plugin-gh-actions#2", "events-not-sweeps", true, false, true},
+		{"head pushed", prEvent(197, branch, "OPEN", "HEAD_PUSHED", "CHECKS").Event, "alexwaumann/code-foundry#197", branch, true, false, true},
+		{"appeared", prEvent(197, branch, "OPEN", "APPEARED").Event, "alexwaumann/code-foundry#197", branch, true, false, false},
+		{"merged", prEvent(197, branch, "MERGED", "MERGED").Event, "alexwaumann/code-foundry#197", branch, true, true, false},
+		{"closed", prEvent(197, branch, "CLOSED", "CLOSED").Event, "alexwaumann/code-foundry#197", branch, true, true, false},
+		{"reopened", prEvent(197, branch, "OPEN", "REOPENED").Event, "alexwaumann/code-foundry#197", branch, true, false, false},
+		{"reviews and comments", prEvent(197, branch, "OPEN", "REVIEWS", "COMMENTS", "REVIEW_DECISION").Event, "alexwaumann/code-foundry#197", branch, false, false, false},
+		{"title and draft", prEvent(197, branch, "OPEN", "DRAFT", "TITLE").Event, "alexwaumann/code-foundry#197", branch, false, false, false},
+	} {
+		var e ghEvent
+		if err := json.Unmarshal(tt.event, &e); err != nil || e.GH == nil || e.GH.PullRequestChanged == nil {
+			t.Fatalf("%s: %v %s", tt.name, err, tt.event)
+		}
+		pr := e.GH.PullRequestChanged
+		if got := prKey(pr.RepoSlug, pr.Number); got != tt.key || pr.HeadRef != tt.ref {
+			t.Errorf("%s: %s on %s, want %s on %s", tt.name, got, pr.HeadRef, tt.key, tt.ref)
+		}
+		if pr.flagRelevant() != tt.relevant || pr.isClosed() != tt.closed || pr.has(kindChecks, kindHeadPushed) != tt.moved {
+			t.Errorf("%s: relevant %v closed %v moved %v", tt.name, pr.flagRelevant(), pr.isClosed(), pr.has(kindChecks, kindHeadPushed))
+		}
+	}
+}
+
+// Which events make the watcher re-read a thread's checks, and what the flag does then.
+// Each case starts from thread s-1 on #197's branch, read once with its checks running
+// (or without a pull request), then changes the checks and sends the events.
+func TestFlagFollowsEvents(t *testing.T) {
+	failing := checksJSON(map[string]string{"go-test": "failure"})
+	for _, tt := range []struct {
+		name    string
+		before  []byte // pr.checks at the start (nil: no pull request)
+		setup   []pluginsdk.Event
+		after   []byte
+		events  []pluginsdk.Event
+		reads   int    // pr.checks reads after the setup's
+		flagged string // the flag's reason, "" for none
+	}{
+		{"checks finished failing", checksJSON(map[string]string{"go-test": ""}), nil, failing,
+			[]pluginsdk.Event{prEvent(197, branch, "OPEN", "CHECKS")}, 1, "go-test failed"},
+		{"head pushed", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{prEvent(197, branch, "OPEN", "HEAD_PUSHED")}, 1, "go-test failed"},
+		{"a burst is one read", checksJSON(map[string]string{"go-test": ""}), nil, failing,
+			[]pluginsdk.Event{prEvent(197, branch, "OPEN", "HEAD_PUSHED", "CHECKS"), prEvent(197, branch, "OPEN", "CHECKS")}, 1, "go-test failed"},
+		{"appeared on the thread's branch", nil, nil, failing,
+			[]pluginsdk.Event{prEvent(197, branch, "OPEN", "APPEARED")}, 1, "go-test failed"},
+		{"appeared, linked by the thread", nil, []pluginsdk.Event{threadUpdated("s-1", "elsewhere", 197)}, failing,
+			[]pluginsdk.Event{prEvent(197, "other-head", "OPEN", "APPEARED")}, 1, "go-test failed"},
+		{"appeared, thread in its own checkout", nil, []pluginsdk.Event{threadUpdated("s-1", "")}, failing,
+			[]pluginsdk.Event{prEvent(197, "a-branch", "OPEN", "APPEARED")}, 1, "go-test failed"},
+		{"another pull request appeared", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{prEvent(5, "someone-else", "OPEN", "APPEARED")}, 0, ""},
+		{"unknown pull request", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{prEvent(5, "someone-else", "OPEN", "CHECKS", "HEAD_PUSHED")}, 0, ""},
+		{"reviews only", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{prEvent(197, branch, "OPEN", "REVIEWS", "REVIEW_DECISION")}, 0, ""},
+		{"other gh events", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{ghPolled, {Subscription: "sub-1", Event: json.RawMessage(`{"gh":{"pullRequestDetailUpdated":{"repoSlug":"` + repo + `","number":197}},"seq":"10","epoch":"e1"}`)}}, 0, ""},
+		{"thread busy, same branch", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{threadUpdated("s-1", branch)}, 0, ""},
+		{"thread on a new branch", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{threadUpdated("s-1", "cf/next")}, 1, "go-test failed"},
+		{"new thread", checksJSON(nil), nil, failing,
+			[]pluginsdk.Event{threadUpdated("s-9", branch)}, 0, ""}, // s-9's read, not s-1's
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hs := start(t, plugintest.Options{})
+			hs.setChecks(tt.before)
+			_ = hs.Event(threadsSnapshot("s-1"))
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 1 })
+			for _, ev := range tt.setup {
+				_ = hs.Event(ev)
+			}
+			settle()
+			base := checksReads(hs.Host, "s-1")
+			hs.setChecks(tt.after)
+			for _, ev := range tt.events {
+				if err := hs.Event(ev); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.flagged != "" {
+				hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+			}
+			settle()
+			if n := checksReads(hs.Host, "s-1") - base; n != tt.reads {
+				t.Errorf("%d reads, want %d", n, tt.reads)
+			}
+			fs := flagsFor(hs.Host, "s-1")
+			switch {
+			case tt.flagged == "" && len(fs) != 0:
+				t.Errorf("flagged %+v", fs)
+			case tt.flagged != "" && (len(fs) != 1 || fs[0].Reason != tt.flagged):
+				t.Errorf("flags %+v, want %q", fs, tt.flagged)
+			}
+			if tt.name == "new thread" && checksReads(hs.Host, "s-9") != 1 {
+				t.Errorf("the new thread was read %d times", checksReads(hs.Host, "s-9"))
+			}
+		})
+	}
+}
+
+// Nothing is read on a timer: with no events, no pr.checks.
+func TestNoReadsWithoutEvents(t *testing.T) {
+	hs := start(t, plugintest.Options{}, func(a *app) { a.retryMin, a.retryMax = 10*time.Millisecond, 10*time.Millisecond })
 	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
 	_ = hs.Event(threadsSnapshot("s-1"))
-	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(h.Invocations()) > 0 })
-	hs.setChecks(checksJSON(map[string]string{"go-test": "failure"}))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 1 })
+	time.Sleep(300 * time.Millisecond)
+	if n := checksReads(hs.Host, "s-1"); n != 1 {
+		t.Errorf("%d reads without an event", n)
+	}
+}
+
+// A merged or closed pull request lowers its threads' flags and does not raise them
+// again for the same failure, also after a resync.
+func TestFlagClearedOnMergeOrClose(t *testing.T) {
+	for _, state := range []string{"MERGED", "CLOSED"} {
+		t.Run(state, func(t *testing.T) {
+			hs := start(t, plugintest.Options{})
+			_ = hs.Event(threadsSnapshot("s-1"))
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+			// pr.checks still answers with the failing checks: the branch's pull request is
+			// the merged one.
+			_ = hs.Event(prEvent(197, branch, state, state))
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
+				fs := flagsFor(h, "s-1")
+				return len(fs) == 2 && fs[1].Level == pluginsdk.FlagNone
+			})
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
+				for _, c := range h.Contexts() {
+					if c.Key == "failing" && c.ThreadID == "s-1" && c.Value == nil {
+						return true
+					}
+				}
+				return false
+			})
+			_ = hs.Event(ghSnapshot)
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 3 })
+			settle()
+			if fs := flagsFor(hs.Host, "s-1"); len(fs) != 2 {
+				t.Errorf("flags after the resync %+v", fs)
+			}
+			// Reopened: its failure is the thread's again, but it was flagged already.
+			_ = hs.Event(prEvent(197, branch, "OPEN", "REOPENED"))
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 4 })
+			settle()
+			if fs := flagsFor(hs.Host, "s-1"); len(fs) != 2 {
+				t.Errorf("flags after reopening %+v", fs)
+			}
+		})
+	}
+}
+
+// The gh snapshot the host resends after the plugin fell behind re-reads every thread
+// once (events may have been lost).
+func TestSnapshotRechecksEveryThread(t *testing.T) {
+	hs := start(t, plugintest.Options{})
+	hs.setChecks(checksJSON(nil))
+	_ = hs.Event(threadsSnapshot("s-1", "s-2", "s-3"))
+	reads := func(want int) func(*plugintest.Host) bool {
+		return func(h *plugintest.Host) bool {
+			return checksReads(h, "s-1") == want && checksReads(h, "s-2") == want && checksReads(h, "s-3") == want
+		}
+	}
+	hs.WaitFor(5*time.Second, reads(1))
+	// The snapshot is several events (viewer, last poll, dashboard, …): one re-read.
+	for _, kind := range []string{"viewerUpdated", "polled", "dashboardUpdated"} {
+		_ = hs.Event(pluginsdk.Event{Subscription: "sub-1", Snapshot: true, Event: json.RawMessage(`{"gh":{"` + kind + `":{}},"epoch":"e1"}`)})
+	}
+	hs.WaitFor(5*time.Second, reads(2))
+	_ = hs.Event(ghPolled) // a live event is not a resync
+	settle()
+	if !reads(2)(hs.Host) {
+		t.Errorf("reads %d %d %d, want 2 each", checksReads(hs.Host, "s-1"), checksReads(hs.Host, "s-2"), checksReads(hs.Host, "s-3"))
+	}
+}
+
+// After a rerun nothing polls for the flag: the rollup's events, pending and then
+// failed, flag the new attempt's failure with no panel open.
+func TestRerunFlaggedByEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{})
+	realFailure(t, hs.gh)
+	hs.gh.set(fmt.Sprintf("run rerun %d -R %s --failed", failRun, repo), nil, nil)
+	_ = hs.Event(threadsSnapshot("s-1"))
 	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+	if _, err := hs.Command(ctx, "rerun-failed", map[string]string{"thread": "s-1"}, pluginsdk.UiContext{ThreadID: "s-1"}); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	before := checksReads(hs.Host, "s-1")
+	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
+	_ = hs.Event(prEvent(197, branch, "OPEN", "CHECKS")) // failure → pending
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == before+1 })
+	settle()
+	hs.setChecks(checksJSON(map[string]string{"go-lint": "failure"}))
+	_ = hs.Event(prEvent(197, branch, "OPEN", "CHECKS")) // pending → failure
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
+		fs := flagsFor(h, "s-1")
+		return len(fs) == 2 && fs[1].Reason == "go-lint failed"
+	})
+}
+
+// A read that failed (or got the host's stale copy) is retried with a backoff: the event
+// that asked for it will not come again.
+func TestRetryAfterFailedRead(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		fail func(hs *harness)
+	}{
+		{"error", func(hs *harness) {
+			hs.mu.Lock()
+			hs.checksErr = pluginsdk.NewError(pluginsdk.CodeInternal, "GitHub is down")
+			hs.mu.Unlock()
+		}},
+		{"stale copy", func(hs *harness) {
+			var pc map[string]any
+			_ = json.Unmarshal(checksJSON(map[string]string{"go-test": ""}), &pc)
+			pc["lastError"] = "HTTP 502"
+			hs.setChecks(mustJSON(pc))
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hs := start(t, plugintest.Options{}, func(a *app) { a.retryMin, a.retryMax = 30*time.Millisecond, 60*time.Millisecond })
+			tt.fail(hs)
+			_ = hs.Event(threadsSnapshot("s-1"))
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") >= 2 })
+			hs.mu.Lock()
+			hs.checksErr = nil
+			hs.checks = checksJSON(map[string]string{"go-test": "failure"})
+			hs.mu.Unlock()
+			hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+			n := checksReads(hs.Host, "s-1")
+			time.Sleep(200 * time.Millisecond)
+			if m := checksReads(hs.Host, "s-1"); m != n {
+				t.Errorf("still retrying after a good read: %d → %d", n, m)
+			}
+		})
+	}
+}
+
+// withFetchedAt is checks b as fetched at t.
+func withFetchedAt(b []byte, t time.Time) []byte {
+	var pc map[string]any
+	_ = json.Unmarshal(b, &pc)
+	pc["fetchedAt"] = t.Format(time.RFC3339Nano)
+	return mustJSON(pc)
+}
+
+// A rerun that starts and fails between two of the daemon's polls leaves the rollup
+// where it was, so no pullRequestChanged comes: the plugin follows the run it reran
+// and reads the checks once it ended, again while the host's copy predates the end.
+func TestRerunFollowedWithoutEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{}, func(a *app) { a.wakePoll, a.followRecheck = 10*time.Millisecond, 10*time.Millisecond })
+	realFailure(t, hs.gh)
+	runKey := fmt.Sprintf("api repos/%s/actions/runs/%d", repo, failRun)
+	ended := time.Date(2026, 10, 18, 12, 30, 0, 0, time.UTC)
+	runAt := func(status, conclusion string, attempt int) []byte {
+		return mustJSON(map[string]any{"id": failRun, "name": "ci", "run_number": 494, "run_attempt": attempt,
+			"status": status, "conclusion": conclusion, "updated_at": ended.Format(time.RFC3339), "head_sha": headSHA})
+	}
+	hs.gh.set(runKey, runAt("completed", "failure", 1), nil) // GitHub has not restarted it yet
+	hs.gh.set(fmt.Sprintf("run rerun %d -R %s --failed", failRun, repo), nil, nil)
+	_ = hs.Event(threadsSnapshot("s-1"))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+
+	if _, err := hs.Command(ctx, "rerun-failed", map[string]string{"thread": "s-1"}, pluginsdk.UiContext{ThreadID: "s-1"}); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	reads := checksReads(hs.Host, "s-1")
+	hs.gh.set(runKey, runAt("in_progress", "", 2), nil)
+	settle()
+	if n := checksReads(hs.Host, "s-1"); n != reads {
+		t.Errorf("read the checks while the run was going: %d → %d", reads, n)
+	}
+	// It fails again (another job): the host's copy is from before the end at first.
+	hs.setChecks(withFetchedAt(checksJSON(map[string]string{"go-test": "failure"}), ended.Add(-10*time.Second)))
+	hs.gh.set(runKey, runAt("completed", "failure", 2), nil)
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") >= reads+2 })
+	if fs := flagsFor(hs.Host, "s-1"); len(fs) != 1 {
+		t.Errorf("flagged from the stale copy: %+v", fs)
+	}
+	hs.setChecks(withFetchedAt(checksJSON(map[string]string{"go-lint": "failure"}), ended.Add(time.Second)))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
+		fs := flagsFor(h, "s-1")
+		return len(fs) == 2 && fs[1].Reason == "go-lint failed"
+	})
+	n := checksReads(hs.Host, "s-1")
+	settle()
+	if m := checksReads(hs.Host, "s-1"); m != n {
+		t.Errorf("still reading after the fresh answer: %d → %d", n, m)
+	}
+}
+
+// A cancelled run is followed to its end, with no restart to wait for.
+func TestCancelFollowed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{}, func(a *app) { a.wakePoll = 10 * time.Millisecond })
+	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
+	hs.gh.set(fmt.Sprintf("run cancel 42 -R %s", repo), nil, nil)
+	hs.gh.set(fmt.Sprintf("api repos/%s/actions/runs/42", repo), mustJSON(map[string]any{"id": 42, "status": "in_progress"}), nil)
+	_ = hs.Event(threadsSnapshot("s-1"))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 1 })
+	if _, err := hs.Command(ctx, "cancel", map[string]string{"thread": "s-1", "run": "42"}, pluginsdk.UiContext{ThreadID: "s-1"}); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	reads := checksReads(hs.Host, "s-1")
+	hs.setChecks(checksJSON(map[string]string{"go-test": "cancelled"}))
+	hs.gh.set(fmt.Sprintf("api repos/%s/actions/runs/42", repo), mustJSON(map[string]any{"id": 42, "status": "completed", "conclusion": "cancelled"}), nil)
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == reads+1 })
 }

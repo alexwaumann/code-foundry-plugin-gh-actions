@@ -1,7 +1,7 @@
 {
   "name": "gh-actions",
   "displayName": "GitHub Actions",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "GitHub Actions runs, jobs and failed-step logs for the selected thread's pull request: rerun, cancel, send a failure to Claude, a thread flag when a run fails, and a wake source agents wait on for a run to finish.",
   "protocol": 1,
   "exec": ["bin/gh-actions"],

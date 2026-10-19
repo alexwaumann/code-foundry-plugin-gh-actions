@@ -8,7 +8,7 @@ finish with its `run-finished` wake source instead of polling.
 
 ```
 code-foundry plugin install gh-actions --enable
-code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.2.0 --enable   # a release directly
+code-foundry plugin install alexwaumann/code-foundry-plugin-gh-actions@v0.3.0 --enable   # a release directly
 ```
 
 ## What it shows
@@ -44,7 +44,18 @@ last data stays, dimmed).
 **Flag.** When a GitHub Actions run of a thread's pull request fails, the thread gets an
 attention flag, "GitHub Actions: <job> failed", until you open it. The same failure is
 not flagged again (also across restarts); a later failure is. A later run that passes
-clears it. The fact `gh-actions.failing` is set on such a thread for `when` clauses.
+clears it, and so does the pull request being merged or closed. The fact
+`gh-actions.failing` is set on such a thread for `when` clauses. The flag follows Code
+Foundry's `gh.pullRequestChanged` events: when its GitHub poll sees a pull request's head
+pushed or its check rollup move (a run queued, finished), or the pull request appear,
+merge, close or reopen, the plugin re-reads the checks of the threads on it (`pr.checks`).
+Nothing is read on a timer, so a failure is flagged within one of the daemon's polls
+(every minute while the app is visible, 5 minutes while hidden, 15 with no window). One
+exception: after *Rerun* or *Cancel* the plugin follows that run (`gh api` every 20 s,
+for at most an hour) and re-reads the checks when it ends, because a rerun that fails
+again leaves the check rollup as it was, and one that runs between two polls sends no
+event. A rerun started on GitHub's own page is seen at the next push, check change, or
+plugin restart.
 
 **Wake source** `run-finished` (needs Code Foundry with wake sources, pluginsdk v0.2.0):
 an agent's thread runs
@@ -60,8 +71,8 @@ Each run attempt fires once, with a title like `ci #507 passed` or `ci #494 fail
 url, head_sha, failed_jobs: [{id, name, step, url}], still_running}`. Runs that had
 already finished when the subscription came are not news. While a pull request has a
 subscription the plugin polls its runs every 20 s while one is going (or none started
-yet) and every 2 minutes once all finished; an open panel's fetches and new checks seen
-by the flag watcher count too. It stops polling with the pull request's last
+yet) and every 2 minutes once all finished; an open panel's fetches and Code Foundry's
+`pullRequestChanged` events for a push or new checks count too. It stops polling with the pull request's last
 subscription (a one-shot goes after its first wake); the panel keeps its own polling
 while someone looks.
 
@@ -89,7 +100,7 @@ a word):
 | commands `pr.checks` | Find the thread's pull request and its checks (the flag, and the panel's pull request when it is opened from the palette) |
 | commands `thread.send` | *Send failure to Claude* (`send-failure`) |
 | commands `view.open.url` | The `open` command opens the run in your browser |
-| events `threads`, `gh` | Know the threads and when GitHub polling saw new pull requests or checks, to flag failures |
+| events `threads`, `gh` | Know the threads (their branches and linked pull requests) and when GitHub polling saw a pull request's head or checks change (`pullRequestChanged`), to flag failures |
 | `threadStatus` | The attention flag on a thread whose run failed |
 
 No secrets, no session environment, no API access. GitHub is reached through your own
@@ -115,6 +126,19 @@ code-foundry plugin logs gh-actions --lines 50          # "run-finished armed", 
 make build && code-foundry plugin restart gh-actions   # after every change
 make test
 ```
+
+0.3.0 was tested on 2026-10-18 against a dev Code Foundry (363eda43) in an isolated
+`CODE_FOUNDRY_HOME`, its GitHub poll at 60 s (a scratch client held a visible GUI event
+stream), one thread on this repository's pull request #2. Idle, 0.2.0 read `pr.checks`
+after every poll (22:04, 22:05, 22:06, 22:07); 0.3.0 read it once at start and not again
+in the next 4 minutes (four polls, one `pullRequestChanged` for another repository's pull
+request, ignored). A push with a failing test: `HEAD_PUSHED`+`CHECKS` (pending) at
+22:12:33, a read at 22:12:36; `CHECKS` pending → failure at 22:13:37, a read and the flag
+"test failed" at 22:13:40. Force-pushing it away: the event at 22:14:40, a read at
+22:14:43 that GitHub answered fresh (success, though the event still said pending and
+the host's copy was 27 s old), the flag cleared. `rerun-failed` at 22:16 failed again
+in 27 s between two polls and no event came; with the follow, attempt 3 (22:21:00 →
+22:21:30) was seen at 22:21:43 and flagged at 22:21:46, also with no event.
 
 0.2.0 was tested on 2026-10-18 against a dev Code Foundry (363eda43) in an isolated
 `CODE_FOUNDRY_HOME`: `plugin wakes gh-actions` listed `run-finished`; a thread subscribed
@@ -147,6 +171,33 @@ for the registry pull request.
 
 ## Changelog
 
+### 0.3.0
+
+- The flag watcher reacts to Code Foundry's `gh.pullRequestChanged` events instead of
+  sweeping: no more `pr.checks` every minute for threads with checks running and every
+  5 minutes for every thread. A `CHECKS`, `HEAD_PUSHED`, `APPEARED`, `MERGED`, `CLOSED`
+  or `REOPENED` change re-reads the threads on that pull request (the ones `pr.checks`
+  last answered with it, the ones that linked it, the ones on its head branch); other
+  kinds and pull requests no thread is on are ignored. A resent gh snapshot (the plugin
+  fell behind) re-reads every thread once. A thread-list update re-reads a thread only
+  when it is new or its branch or linked pull requests changed.
+- A merged or closed pull request lowers its threads' flags; the failure is remembered,
+  so a later read does not raise it again.
+- After a rerun or a cancel the plugin follows that one run (`gh api
+  repos/…/actions/runs/<id>` every 20 s until it completes, at most an hour) and then
+  re-reads the checks, again while the host's copy predates the run's end
+  (`fetchedAt`): a rerun that fails again leaves the rollup as it was, and when it runs
+  between two of the daemon's polls no `pullRequestChanged` comes. A failure that
+  completes while no panel is open is still flagged.
+- A `pr.checks` read that failed, or came back with the host's stale copy (`lastError`),
+  is retried after 30 s, doubling to 10 minutes: no event would ask again.
+- `pullRequestChanged` events for a push or new checks also wake the pull request's open
+  panels and run-finished poller.
+- Needs Code Foundry with `pullRequestChanged` (code-foundry #210, merged at
+  5707b99b; tested on 363eda43); on an older one the flag only updates when a thread's
+  branch or pull request changes, or after a rerun or cancel. Same permissions and
+  pluginsdk v0.2.0 as 0.2.0, so updating keeps it enabled.
+
 ### 0.2.0
 
 - Wake source `run-finished` (args `pr`, from the thread's pull request, and optional
@@ -166,8 +217,8 @@ for the registry pull request.
 - Built against the released Code Foundry SDK, `pluginsdk` v0.1.0 (code-foundry
   `4ed617fd`): the surface's `Close` takes the close reason the host now sends. No
   behaviour change; same permissions as 0.1.1, so updating keeps it enabled.
-- Tests: the harness shuts the plugin down before its data dir is removed (`TestFlagSweep`
-  could fail under `-race` when the flag watcher wrote `flags.json` during cleanup).
+- Tests: the harness shuts the plugin down before its data dir is removed (the flag sweep
+  test could fail under `-race` when the flag watcher wrote `flags.json` during cleanup).
 
 ### 0.1.1
 
