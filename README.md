@@ -50,7 +50,12 @@ Foundry's `gh.pullRequestChanged` events: when its GitHub poll sees a pull reque
 pushed or its check rollup move (a run queued, finished), or the pull request appear,
 merge, close or reopen, the plugin re-reads the checks of the threads on it (`pr.checks`).
 Nothing is read on a timer, so a failure is flagged within one of the daemon's polls
-(every minute while the app is visible, 5 minutes while hidden, 15 with no window).
+(every minute while the app is visible, 5 minutes while hidden, 15 with no window). One
+exception: after *Rerun* or *Cancel* the plugin follows that run (`gh api` every 20 s,
+for at most an hour) and re-reads the checks when it ends, because a rerun that fails
+again leaves the check rollup as it was, and one that runs between two polls sends no
+event. A rerun started on GitHub's own page is seen at the next push, check change, or
+plugin restart.
 
 **Wake source** `run-finished` (needs Code Foundry with wake sources, pluginsdk v0.2.0):
 an agent's thread runs
@@ -122,6 +127,19 @@ make build && code-foundry plugin restart gh-actions   # after every change
 make test
 ```
 
+0.3.0 was tested on 2026-10-18 against a dev Code Foundry (363eda43) in an isolated
+`CODE_FOUNDRY_HOME`, its GitHub poll at 60 s (a scratch client held a visible GUI event
+stream), one thread on this repository's pull request #2. Idle, 0.2.0 read `pr.checks`
+after every poll (22:04, 22:05, 22:06, 22:07); 0.3.0 read it once at start and not again
+in the next 4 minutes (four polls, one `pullRequestChanged` for another repository's pull
+request, ignored). A push with a failing test: `HEAD_PUSHED`+`CHECKS` (pending) at
+22:12:33, a read at 22:12:36; `CHECKS` pending → failure at 22:13:37, a read and the flag
+"test failed" at 22:13:40. Force-pushing it away: the event at 22:14:40, a read at
+22:14:43 that GitHub answered fresh (success, though the event still said pending and
+the host's copy was 27 s old), the flag cleared. `rerun-failed` at 22:16 failed again
+in 27 s between two polls and no event came; with the follow, attempt 3 (22:21:00 →
+22:21:30) was seen at 22:21:43 and flagged at 22:21:46, also with no event.
+
 0.2.0 was tested on 2026-10-18 against a dev Code Foundry (363eda43) in an isolated
 `CODE_FOUNDRY_HOME`: `plugin wakes gh-actions` listed `run-finished`; a thread subscribed
 with `--arg pr=alexwaumann/code-foundry#216` and `plugin logs gh-actions` showed `run-finished
@@ -165,15 +183,20 @@ for the registry pull request.
   when it is new or its branch or linked pull requests changed.
 - A merged or closed pull request lowers its threads' flags; the failure is remembered,
   so a later read does not raise it again.
-- After a rerun or a cancel the flag follows the rollup's events (pending, then done);
-  a failure that completes while no panel is open is still flagged.
+- After a rerun or a cancel the plugin follows that one run (`gh api
+  repos/…/actions/runs/<id>` every 20 s until it completes, at most an hour) and then
+  re-reads the checks, again while the host's copy predates the run's end
+  (`fetchedAt`): a rerun that fails again leaves the rollup as it was, and when it runs
+  between two of the daemon's polls no `pullRequestChanged` comes. A failure that
+  completes while no panel is open is still flagged.
 - A `pr.checks` read that failed, or came back with the host's stale copy (`lastError`),
   is retried after 30 s, doubling to 10 minutes: no event would ask again.
 - `pullRequestChanged` events for a push or new checks also wake the pull request's open
   panels and run-finished poller.
-- Needs Code Foundry with `pullRequestChanged` (code-foundry #210, merged at 5707b99b; tested
-  on 363eda43); on an older one the flag only updates when a thread's branch or pull request
-  changes. Same permissions and pluginsdk v0.2.0 as 0.2.0, so updating keeps it enabled.
+- Needs Code Foundry with `pullRequestChanged` (code-foundry #210, merged at
+  5707b99b; tested on 363eda43); on an older one the flag only updates when a thread's
+  branch or pull request changes, or after a rerun or cancel. Same permissions and
+  pluginsdk v0.2.0 as 0.2.0, so updating keeps it enabled.
 
 ### 0.2.0
 

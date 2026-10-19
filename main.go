@@ -36,6 +36,9 @@ type app struct {
 	// debounce batches the flag checks a burst of events asks for; a check whose read
 	// failed is retried after retryMin, doubling up to retryMax.
 	debounce, retryMin, retryMax time.Duration
+	// followMax bounds how long a run reran or cancelled is followed for the flag;
+	// followRecheck is how soon checks fetched before its end are read again.
+	followMax, followRecheck time.Duration
 	// wakePoll is how often a pull request with a run-finished subscription is polled
 	// while a run is going (or none started), wakeIdlePoll once every run finished.
 	wakePoll, wakeIdlePoll time.Duration
@@ -57,6 +60,8 @@ func newApp(r ghRunner) *app {
 		debounce:      2 * time.Second,
 		retryMin:      30 * time.Second,
 		retryMax:      10 * time.Minute,
+		followMax:     time.Hour,
+		followRecheck: 10 * time.Second,
 		wakePoll:      20 * time.Second,
 		wakeIdlePoll:  2 * time.Minute,
 		surfaces:      map[string]*runsSurface{},

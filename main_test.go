@@ -1046,7 +1046,7 @@ func TestDecodePullRequestChanged(t *testing.T) {
 		relevant      bool
 		closed, moved bool // moved: a push or new checks (pokes the panel)
 	}{
-		{"captured checks", fixture(t, "pull_request_changed.json"), "alexwaumann/code-foundry#210", "cf/gh-events-1-pull-request-changed", true, false, true},
+		{"captured checks", fixture(t, "pull_request_changed.json"), "alexwaumann/code-foundry-plugin-gh-actions#2", "events-not-sweeps", true, false, true},
 		{"head pushed", prEvent(197, branch, "OPEN", "HEAD_PUSHED", "CHECKS").Event, "alexwaumann/code-foundry#197", branch, true, false, true},
 		{"appeared", prEvent(197, branch, "OPEN", "APPEARED").Event, "alexwaumann/code-foundry#197", branch, true, false, false},
 		{"merged", prEvent(197, branch, "MERGED", "MERGED").Event, "alexwaumann/code-foundry#197", branch, true, true, false},
@@ -1286,4 +1286,80 @@ func TestRetryAfterFailedRead(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withFetchedAt is checks b as fetched at t.
+func withFetchedAt(b []byte, t time.Time) []byte {
+	var pc map[string]any
+	_ = json.Unmarshal(b, &pc)
+	pc["fetchedAt"] = t.Format(time.RFC3339Nano)
+	return mustJSON(pc)
+}
+
+// A rerun that starts and fails between two of the daemon's polls leaves the rollup
+// where it was, so no pullRequestChanged comes: the plugin follows the run it reran
+// and reads the checks once it ended, again while the host's copy predates the end.
+func TestRerunFollowedWithoutEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{}, func(a *app) { a.wakePoll, a.followRecheck = 10*time.Millisecond, 10*time.Millisecond })
+	realFailure(t, hs.gh)
+	runKey := fmt.Sprintf("api repos/%s/actions/runs/%d", repo, failRun)
+	ended := time.Date(2026, 10, 18, 12, 30, 0, 0, time.UTC)
+	runAt := func(status, conclusion string, attempt int) []byte {
+		return mustJSON(map[string]any{"id": failRun, "name": "ci", "run_number": 494, "run_attempt": attempt,
+			"status": status, "conclusion": conclusion, "updated_at": ended.Format(time.RFC3339), "head_sha": headSHA})
+	}
+	hs.gh.set(runKey, runAt("completed", "failure", 1), nil) // GitHub has not restarted it yet
+	hs.gh.set(fmt.Sprintf("run rerun %d -R %s --failed", failRun, repo), nil, nil)
+	_ = hs.Event(threadsSnapshot("s-1"))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return len(flagsFor(h, "s-1")) == 1 })
+
+	if _, err := hs.Command(ctx, "rerun-failed", map[string]string{"thread": "s-1"}, pluginsdk.UiContext{ThreadID: "s-1"}); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	reads := checksReads(hs.Host, "s-1")
+	hs.gh.set(runKey, runAt("in_progress", "", 2), nil)
+	settle()
+	if n := checksReads(hs.Host, "s-1"); n != reads {
+		t.Errorf("read the checks while the run was going: %d → %d", reads, n)
+	}
+	// It fails again (another job): the host's copy is from before the end at first.
+	hs.setChecks(withFetchedAt(checksJSON(map[string]string{"go-test": "failure"}), ended.Add(-10*time.Second)))
+	hs.gh.set(runKey, runAt("completed", "failure", 2), nil)
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") >= reads+2 })
+	if fs := flagsFor(hs.Host, "s-1"); len(fs) != 1 {
+		t.Errorf("flagged from the stale copy: %+v", fs)
+	}
+	hs.setChecks(withFetchedAt(checksJSON(map[string]string{"go-lint": "failure"}), ended.Add(time.Second)))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool {
+		fs := flagsFor(h, "s-1")
+		return len(fs) == 2 && fs[1].Reason == "go-lint failed"
+	})
+	n := checksReads(hs.Host, "s-1")
+	settle()
+	if m := checksReads(hs.Host, "s-1"); m != n {
+		t.Errorf("still reading after the fresh answer: %d → %d", n, m)
+	}
+}
+
+// A cancelled run is followed to its end, with no restart to wait for.
+func TestCancelFollowed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hs := start(t, plugintest.Options{}, func(a *app) { a.wakePoll = 10 * time.Millisecond })
+	hs.setChecks(checksJSON(map[string]string{"go-test": ""}))
+	hs.gh.set(fmt.Sprintf("run cancel 42 -R %s", repo), nil, nil)
+	hs.gh.set(fmt.Sprintf("api repos/%s/actions/runs/42", repo), mustJSON(map[string]any{"id": 42, "status": "in_progress"}), nil)
+	_ = hs.Event(threadsSnapshot("s-1"))
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == 1 })
+	if _, err := hs.Command(ctx, "cancel", map[string]string{"thread": "s-1", "run": "42"}, pluginsdk.UiContext{ThreadID: "s-1"}); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	reads := checksReads(hs.Host, "s-1")
+	hs.setChecks(checksJSON(map[string]string{"go-test": "cancelled"}))
+	hs.gh.set(fmt.Sprintf("api repos/%s/actions/runs/42", repo), mustJSON(map[string]any{"id": 42, "status": "completed", "conclusion": "cancelled"}), nil)
+	hs.WaitFor(5*time.Second, func(h *plugintest.Host) bool { return checksReads(h, "s-1") == reads+1 })
 }

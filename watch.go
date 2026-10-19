@@ -36,6 +36,9 @@ type watcher struct {
 	all     bool
 	prOf    map[string]string // thread → prKey of the pull request pr.checks last answered with
 	closed  map[string]bool   // prKey → merged or closed, as the last event about it said
+	// notBefore: thread → when a run it followed (follow.go) ended; its next checks
+	// answer must be fetched after it.
+	notBefore map[string]time.Time
 
 	// Owned by the worker goroutine.
 	state   flagState
@@ -43,6 +46,7 @@ type watcher struct {
 	failing map[string]bool          // thread → the gh-actions.failing fact sent
 	live    map[string]bool          // thread → a flag this plugin raised may still be up
 	backoff map[string]time.Duration // thread → the delay before re-reading checks that failed to load
+	stale   map[string]int           // thread → answers older than its notBefore so far
 }
 
 // threadInfo is what the thread list says about a thread that can change its pull
@@ -61,17 +65,19 @@ type flagState struct {
 func newWatcher(a *app, h *pluginsdk.Host) *watcher {
 	return &watcher{
 		a: a, h: h,
-		kick:    make(chan struct{}, 1),
-		done:    make(chan struct{}),
-		threads: map[string]threadInfo{},
-		dirty:   map[string]bool{},
-		prOf:    map[string]string{},
-		closed:  map[string]bool{},
-		state:   flagState{Flagged: map[string]string{}},
-		prints:  map[string]string{},
-		failing: map[string]bool{},
-		live:    map[string]bool{},
-		backoff: map[string]time.Duration{},
+		kick:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
+		threads:   map[string]threadInfo{},
+		dirty:     map[string]bool{},
+		prOf:      map[string]string{},
+		closed:    map[string]bool{},
+		notBefore: map[string]time.Time{},
+		state:     flagState{Flagged: map[string]string{}},
+		prints:    map[string]string{},
+		failing:   map[string]bool{},
+		live:      map[string]bool{},
+		backoff:   map[string]time.Duration{},
+		stale:     map[string]int{},
 	}
 }
 
@@ -353,6 +359,9 @@ func (w *watcher) check(thread string) {
 		w.later(thread)
 	} else {
 		delete(w.backoff, thread)
+	}
+	if !w.fresh(thread, pc) {
+		return // the host's copy predates the run this thread waits on
 	}
 	key := prKey(pc.Repo, pc.Number)
 	w.mu.Lock()

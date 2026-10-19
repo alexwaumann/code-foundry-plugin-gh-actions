@@ -101,7 +101,7 @@ func (a *app) rerunFailed(ctx context.Context, h *pluginsdk.Host, req pluginsdk.
 	if err := a.gh.rerun(ctx, t.PR.Repo, t.Run.ID, true); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
-	a.changed(t)
+	a.changed(t, true)
 	return result("Rerunning the failed jobs of "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
@@ -114,7 +114,7 @@ func (a *app) rerunAll(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Com
 	if err := a.gh.rerun(ctx, t.PR.Repo, t.Run.ID, false); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("rerunning %s: %w", runLabel(t.Run), err)
 	}
-	a.changed(t)
+	a.changed(t, true)
 	return result("Rerunning every job of "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
@@ -127,7 +127,7 @@ func (a *app) cancel(ctx context.Context, h *pluginsdk.Host, req pluginsdk.Comma
 	if err := a.gh.cancel(ctx, t.PR.Repo, t.Run.ID); err != nil {
 		return pluginsdk.CommandResult{}, fmt.Errorf("cancelling %s: %w", runLabel(t.Run), err)
 	}
-	a.changed(t)
+	a.changed(t, false)
 	return result("Cancelling "+runLabel(t.Run)+waitLine(h, t), t)
 }
 
@@ -238,8 +238,11 @@ func (a *app) failure(ctx context.Context, t target, jobID int64) (ghRun, ghJob,
 }
 
 // changed wakes what shows the pull request's runs after a rerun or a cancel: its open
-// surfaces and run-finished poller now. The flag watcher follows from the
-// pullRequestChanged events of the check rollup going pending, then done.
-func (a *app) changed(t target) {
+// surfaces and run-finished poller now, and the flag watcher once the run ends
+// (follow.go: the check rollup's pullRequestChanged events may not show a rerun).
+func (a *app) changed(t target, rerun bool) {
 	a.poke(t.PR.Repo, t.PR.Number)
+	if a.watch != nil {
+		a.watch.follow(t, rerun)
+	}
 }
