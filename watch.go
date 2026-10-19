@@ -112,7 +112,7 @@ func (w *watcher) stop() {
 // threadEvent is the part of a threadList event the watcher reads.
 type threadEvent struct {
 	ID                 string `json:"id"`
-	Branch             string `json:"branch"`
+	Branch             string `json:"branch"` // the branch Code Foundry made its worktree on, else ""
 	LinkedPullRequests []struct {
 		Slug   string `json:"slug"`
 		Number int    `json:"number"`
@@ -237,7 +237,7 @@ func (w *watcher) onEvent(ev pluginsdk.Event) {
 		}
 		n := 0
 		if pr.flagRelevant() {
-			n = w.markPR(key, pr.HeadRef)
+			n = w.markPR(key, pr.HeadRef, pr.has(kindAppeared, kindReopened))
 		}
 		w.mu.Unlock()
 		if poke != nil { // the open panels and run-finished pollers of the pull request
@@ -257,13 +257,17 @@ func (w *watcher) onEvent(ev pluginsdk.Event) {
 	w.signal()
 }
 
-// markPR marks the threads on a pull request dirty: the ones pr.checks last answered
-// it for, the ones that linked it, and the ones on its head branch (it may be theirs
-// now: just opened, reopened). It returns how many. Called with mu held.
-func (w *watcher) markPR(key, headRef string) int {
+// markPR marks the threads on a pull request dirty and returns how many: the ones
+// pr.checks last answered it for, the ones that linked it, the ones on its head branch
+// (the branch Code Foundry made their worktree on). A pull request that appeared or
+// reopened may also be one of the threads without a pull request yet whose branch the
+// thread list does not say (a thread in an existing checkout has none there): those
+// are read too, which costs no GitHub request when they still have none. Called with
+// mu held.
+func (w *watcher) markPR(key, headRef string, opened bool) int {
 	n := 0
 	for id, t := range w.threads {
-		hit := w.prOf[id] == key || headRef != "" && t.branch == headRef
+		hit := w.prOf[id] == key || headRef != "" && t.branch == headRef || opened && w.prOf[id] == ""
 		for _, p := range strings.Split(t.prs, ",") {
 			hit = hit || p == key
 		}
